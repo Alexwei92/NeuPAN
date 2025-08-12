@@ -28,16 +28,17 @@ from typing import Optional
 import sys
 class DUNE(torch.nn.Module):
 
-    def __init__(self, receding: int=10, checkpoint =None, robot=None, dune_max_num: int=100, train_kwargs: dict=dict()) -> None:
+    def __init__(self, receding: int=10, checkpoint =None, robot_G=None, robot_h=None, dune_max_num: int=100, train_kwargs: dict=dict(), robot_name=None, model_name=None) -> None:
         super(DUNE, self).__init__()
   
         self.T = receding
         self.max_num = dune_max_num
 
-        self.robot = robot
+        self.robot_name = robot_name
+        self.model_name = model_name
 
-        self.G = np_to_tensor(robot.G)
-        self.h = np_to_tensor(robot.h)
+        self.G = np_to_tensor(robot_G)
+        self.h = np_to_tensor(robot_h)
         self.edge_dim = self.G.shape[0]
         self.state_dim = self.G.shape[1]
 
@@ -166,9 +167,12 @@ class DUNE(torch.nn.Module):
 
     def train_dune(self, train_kwargs):
 
-        model_name = train_kwargs.get("model_name", self.robot.name)
+        model_name = train_kwargs.get("model_name", self.robot_name)
 
-        checkpoint_path = sys.path[0] + '/model' + '/' + model_name
+        if self.model_name is not None:
+            checkpoint_path = sys.path[0] + '/model' + '/' + model_name + '/' + self.model_name
+        else:
+            checkpoint_path = sys.path[0] + '/model' + '/' + model_name
         checkpoint_path = repeat_mk_dirs(checkpoint_path)
         
         self.train_model = DUNETrain(self.model, self.G, self.h, checkpoint_path)

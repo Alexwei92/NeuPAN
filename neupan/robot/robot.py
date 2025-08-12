@@ -34,7 +34,7 @@ class robot:
         receding: int = 10,
         step_time: float = 0.1,
         kinematics: Optional[str] = None,
-        vertices: Optional[Union[list[float], np.ndarray]] = None,
+        vertices: Optional[Union[list[list[float]], np.ndarray, list[list[list[float]]]]] = None,
         max_speed: list[float] = [inf, inf],
         max_acce: list[float] = [inf, inf],
         wheelbase: Optional[float] = None,
@@ -47,10 +47,21 @@ class robot:
             raise ValueError("kinematics is required")
 
         self.shape = None
-
-        self.vertices = self.cal_vertices(vertices, length, width, wheelbase)
         
-        self.G, self.h = gen_inequal_from_vertex(self.vertices)
+        self.is_multipolygon = is_vertices_multipolygon(vertices)
+        if not self.is_multipolygon:
+            self.num_of_polygons = 1
+            self.vertices = self.cal_vertices(vertices, length, width, wheelbase)
+            self.G, self.h = gen_inequal_from_vertex(self.vertices)
+        else:
+            self.vertices_list = self.cal_vertices_from_multipolygon(vertices, wheelbase)
+            self.num_of_polygons = len(vertices)
+            self.G_list = []
+            self.h_list = []
+            for vertices in self.vertices_list:
+                G, h = gen_inequal_from_vertex(vertices)
+                self.G_list.append(G)
+                self.h_list.append(h)
 
         self.T = receding
         self.dt = step_time
@@ -68,7 +79,8 @@ class robot:
         self.speed_bound = self.max_speed
         self.acce_bound = self.max_acce * self.dt
 
-        self.name = kwargs.get("name", self.kinematics + "_robot" + '_default') 
+        robot_name = kwargs.get("name", 'default') 
+        self.name = self.kinematics + "_robot" + '_' + str(robot_name) 
 
 
     def define_variable(self, no_obs: bool = False, indep_dis: cp.Variable = None):
@@ -122,16 +134,16 @@ class robot:
         else:
             self.para_gamma_c = [
                 cp.Parameter(
-                    (max_num, 2),
-                    value=np.zeros((max_num, 2)),
+                    (max_num * self.num_of_polygons, 2),
+                    value=np.zeros((max_num * self.num_of_polygons, 2)),
                     name="para_gamma_c" + str(i),
                 )
                 for i in range(self.T)
             ]  # lam.T, fa
             self.para_zeta_a = [
                 cp.Parameter(
-                    (max_num, 1),
-                    value=np.zeros((max_num, 1)),
+                    (max_num * self.num_of_polygons, 1),
+                    value=np.zeros((max_num * self.num_of_polygons, 1)),
                     name="para_zeta_a" + str(i),
                 )
                 for i in range(self.T)
@@ -328,6 +340,7 @@ class robot:
         '''
 
         if vertices is not None:
+           self.shape = "polygon"
            if isinstance(vertices, list):
                 vertices_np = np.array(vertices).T
 
@@ -346,4 +359,37 @@ class robot:
         assert vertices_np.shape[1] >= 3, "vertices must be a numpy array of shape (2, N), N >= 3"
 
         return vertices_np
+    
+    def cal_vertices_from_multipolygon(self, vertices_list = None, wheelbase=None):
+        self.shape = "multipolygon"
+        if vertices_list is not None:
+            vertices_np_list = []
+            for vertices in vertices_list:
+                vertices_np = np.array(vertices).T
+                assert vertices_np.shape[1] >= 3, "vertices must be a numpy array of shape (2, N), N >= 3"
 
+                vertices_np_list.append(vertices_np)
+                
+        self.wheelbase = wheelbase
+           
+        return vertices_np_list
+
+def is_vertices_multipolygon(vertices) -> bool:
+    if vertices is None:
+        return False
+    
+    if not isinstance(vertices, list) or len(vertices) == 0:
+        return False
+    
+    first_element = vertices[0]
+    
+    if (
+        not isinstance(first_element, list) or 
+        len(first_element) == 0
+    ):
+        return False
+    
+    if isinstance(first_element[0], list):
+        return True
+    
+    return False

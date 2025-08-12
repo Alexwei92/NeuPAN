@@ -3,6 +3,15 @@ import irsim
 import numpy as np
 import argparse
 
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    message=r"Converting [GA] to a CSC matrix; may take a while\.",
+    module=r"^ecos(\.ecos)?$",
+)
+
 def main(
     env_file,
     planner_file,
@@ -11,7 +20,7 @@ def main(
     full=False,
     no_display=True,
     point_vel=False,
-    max_steps=1000, 
+    max_steps=2000, 
     reverse=False,
 ):
     
