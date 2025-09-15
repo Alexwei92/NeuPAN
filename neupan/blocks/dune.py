@@ -28,14 +28,14 @@ from typing import Optional
 import sys
 class DUNE(torch.nn.Module):
 
-    def __init__(self, receding: int=10, checkpoint =None, robot_G=None, robot_h=None, dune_max_num: int=100, train_kwargs: dict=dict(), robot_name=None, model_name=None) -> None:
+    def __init__(self, receding: int=10, checkpoint =None, robot_G=None, robot_h=None, dune_max_num: int=100, train_kwargs: dict=dict(), robot_name=None, part_name=None) -> None:
         super(DUNE, self).__init__()
   
         self.T = receding
         self.max_num = dune_max_num
 
         self.robot_name = robot_name
-        self.model_name = model_name
+        self.part_name = part_name
 
         self.G = np_to_tensor(robot_G)
         self.h = np_to_tensor(robot_h)
@@ -169,8 +169,8 @@ class DUNE(torch.nn.Module):
 
         model_name = train_kwargs.get("model_name", self.robot_name)
 
-        if self.model_name is not None:
-            checkpoint_path = sys.path[0] + '/model' + '/' + model_name + '/' + self.model_name
+        if self.part_name is not None:
+            checkpoint_path = sys.path[0] + '/model' + '/' + model_name + '/' + self.part_name
         else:
             checkpoint_path = sys.path[0] + '/model' + '/' + model_name
         checkpoint_path = repeat_mk_dirs(checkpoint_path)

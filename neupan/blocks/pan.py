@@ -95,7 +95,7 @@ class PAN(torch.nn.Module):
                         dune_max_num,
                         train_kwargs,
                         robot_name=robot.name,
-                        model_name='poly_' + str(i)
+                        part_name='poly_' + str(i)
                     ))
             else:
                 self.dune_layer = DUNE(
