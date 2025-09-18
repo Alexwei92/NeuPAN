@@ -34,6 +34,8 @@ ipath:
     # [[0.0, 8.75, -3.1416], [-3.0, 3.25, -0.4],[-4.0, 3.75, 0], [-3.2, 3.75, 0]]
     # kms sprayer
     [[-0.5, 8.75, -3.1416], [-3.0, 3.25, -0.4],[-4.0, 3.75, 0], [0.0, 3.75, 0]]
+    # # double pruner
+    # [[0.0, 8.75, -3.1416], [-3.25, 3.25, -0.5],[-4.5, 3.75, 0], [-3.2, 3.75, 0]]
   curve_style: 'reeds'   # 'dubins' or reeds
   # min_radius: 3.0
   loop: False
@@ -57,6 +59,10 @@ pan:
     'example/dune_train/model/acker_robot_kms_sprayer/poly_0/model_5000.pth',
     'example/dune_train/model/acker_robot_kms_sprayer/poly_1/model_5000.pth',
     'example/dune_train/model/acker_robot_kms_sprayer/poly_2/model_5000.pth',
+    # # double pruner
+    # 'example/dune_train/model/acker_robot_double_pruner/poly_0/model_5000.pth',
+    # 'example/dune_train/model/acker_robot_double_pruner/poly_1/model_5000.pth',
+    # 'example/dune_train/model/acker_robot_double_pruner/poly_2/model_5000.pth',
   ]
   iter_threshold: 0.1
 
