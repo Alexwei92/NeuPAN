@@ -258,25 +258,16 @@ class PAN(torch.nn.Module):
 
             else:
                 if self.is_multipolygon:
-                    total_effect_num = 0
-                    mu_diff_sum = 0
-                    lam_diff_sum = 0
+                    diff = 0
                     
                     for i in range(self.num_of_polygons):
-                        if i < len(mu_list) and i < len(self.current_nom_values[2]):
-                            effect_num = min([mu_list[i][0].shape[1], self.current_nom_values[2][i][0].shape[1], self.nrmp_max_num])
-                            total_effect_num += effect_num
-                            
-                            mu_diff = torch.norm(torch.cat(mu_list[i])[:, :effect_num] - torch.cat(self.current_nom_values[2][i])[:, :effect_num])
-                            lam_diff = torch.norm(torch.cat(lam_list[i])[:, :effect_num] - torch.cat(self.current_nom_values[3][i])[:, :effect_num])
-                            
-                            mu_diff_sum += mu_diff**2
-                            lam_diff_sum += lam_diff**2
-                    
-                    if total_effect_num > 0:
-                        diff = (mu_diff_sum + lam_diff_sum) / total_effect_num
-                    else:
-                        diff = 0
+                        effect_num = min([mu_list[i][0].shape[1], self.current_nom_values[2][i][0].shape[1], self.nrmp_max_num])
+                        
+                        mu_diff = torch.norm(torch.cat(mu_list[i])[:, :effect_num] - torch.cat(self.current_nom_values[2][i])[:, :effect_num]) / effect_num
+                        lam_diff = torch.norm(torch.cat(lam_list[i])[:, :effect_num] - torch.cat(self.current_nom_values[3][i])[:, :effect_num]) / effect_num
+                        
+                        diff += mu_diff**2 + lam_diff**2
+
                 else:
                     effect_num = min([mu_list[0].shape[1], self.current_nom_values[2][0].shape[1], self.nrmp_max_num])
 
