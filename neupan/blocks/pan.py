@@ -20,10 +20,8 @@ along with NeuPAN planner. If not, see <https://www.gnu.org/licenses/>.
 
 import torch
 from neupan.blocks import NRMP, DUNE
-import numpy as np
 from math import inf
 from typing import Optional
-import numpy as np
 from neupan.configuration import to_device, tensor_to_np
 from neupan.util import downsample_decimation
 
@@ -82,15 +80,33 @@ class PAN(torch.nn.Module):
         self.no_obs = (nrmp_max_num == 0 or dune_max_num == 0)
         self.nrmp_max_num = nrmp_max_num
         self.dune_max_num = dune_max_num
-
+        self.is_multipolygon = robot.is_multipolygon
+        self.num_of_polygons = robot.num_of_polygons
+        
         if not self.no_obs:
-            self.dune_layer = DUNE(
-                receding,
-                dune_checkpoint,
-                robot,
-                dune_max_num,
-                train_kwargs,
-            )
+            if self.is_multipolygon:
+                self.dune_layer_list = []
+                for i, (robot_G, robot_h) in enumerate(zip(robot.G_list, robot.h_list)):
+                    self.dune_layer_list.append(DUNE(
+                        receding,
+                        dune_checkpoint[i] if dune_checkpoint is not None else None,
+                        robot_G,
+                        robot_h,
+                        dune_max_num,
+                        train_kwargs,
+                        robot_name=robot.name,
+                        part_name='poly_' + str(i)
+                    ))
+            else:
+                self.dune_layer = DUNE(
+                    receding,
+                    dune_checkpoint,
+                    robot.G,
+                    robot.h,
+                    dune_max_num,
+                    train_kwargs,
+                    robot_name=robot.name,
+                )
         else:
             self.dune_layer = None
 
@@ -128,9 +144,19 @@ class PAN(torch.nn.Module):
                 point_flow_list, R_list, obs_points_list = self.generate_point_flow(
                     nom_s, obs_points, point_velocities
                 )
-                mu_list, lam_list, sort_point_list = self.dune_layer(
-                    point_flow_list, R_list, obs_points_list
-                )
+                if self.is_multipolygon:
+                    mu_list, lam_list, sort_point_list = [], [], []
+                    for i, dune_layer in enumerate(self.dune_layer_list):
+                        mu_list_i, lam_list_i, sort_point_list_i = dune_layer(
+                            point_flow_list, R_list, obs_points_list
+                        )
+                        mu_list.append(mu_list_i)
+                        lam_list.append(lam_list_i)
+                        sort_point_list.append(sort_point_list_i)
+                else:  
+                    mu_list, lam_list, sort_point_list = self.dune_layer(
+                        point_flow_list, R_list, obs_points_list
+                    )
             else:
                 mu_list, lam_list, sort_point_list = [], [], []
                 
@@ -231,31 +257,47 @@ class PAN(torch.nn.Module):
                 diff = nom_s_diff**2 + nom_u_diff**2
 
             else:
-                effect_num = min([mu_list[0].shape[1], self.current_nom_values[2][0].shape[1], self.nrmp_max_num])
+                if self.is_multipolygon:
+                    diff = 0
+                    
+                    for i in range(self.num_of_polygons):
+                        effect_num = min([mu_list[i][0].shape[1], self.current_nom_values[2][i][0].shape[1], self.nrmp_max_num])
+                        
+                        mu_diff = torch.norm(torch.cat(mu_list[i])[:, :effect_num] - torch.cat(self.current_nom_values[2][i])[:, :effect_num]) / effect_num
+                        lam_diff = torch.norm(torch.cat(lam_list[i])[:, :effect_num] - torch.cat(self.current_nom_values[3][i])[:, :effect_num]) / effect_num
+                        
+                        diff += mu_diff**2 + lam_diff**2
 
-                mu_diff = torch.norm( (torch.cat(mu_list)[:, :effect_num] - torch.cat(self.current_nom_values[2])[:, :effect_num] )) / effect_num
-                lam_diff = torch.norm( (torch.cat(lam_list)[:, :effect_num]  - torch.cat(self.current_nom_values[3])[:, :effect_num]  )) / effect_num
+                else:
+                    effect_num = min([mu_list[0].shape[1], self.current_nom_values[2][0].shape[1], self.nrmp_max_num])
 
-                diff = mu_diff**2 + lam_diff**2
+                    mu_diff = torch.norm( (torch.cat(mu_list)[:, :effect_num] - torch.cat(self.current_nom_values[2])[:, :effect_num] )) / effect_num
+                    lam_diff = torch.norm( (torch.cat(lam_list)[:, :effect_num]  - torch.cat(self.current_nom_values[3])[:, :effect_num]  )) / effect_num
+
+                    diff = mu_diff**2 + lam_diff**2
 
             self.current_nom_values = [nom_s, nom_u, mu_list, lam_list]
 
             return diff < self.iter_threshold
 
+
     @property
     def min_distance(self):
-
-        if self.dune_layer is None or self.no_obs:
-            return inf
         
+        if self.no_obs:
+            return inf
+        elif self.is_multipolygon:
+            return min([dune_layer.min_distance for dune_layer in self.dune_layer_list])
         else:
             return self.dune_layer.min_distance
-        
+
     @property
     def dune_points(self):
         
-        if self.dune_layer is None or self.no_obs:
+        if self.no_obs:
             return None
+        elif self.is_multipolygon:
+            return tensor_to_np(self.dune_layer_list[0].points)
         else:
             return tensor_to_np(self.dune_layer.points)
 
@@ -266,10 +308,6 @@ class PAN(torch.nn.Module):
             return None
         else:
             return tensor_to_np(self.nrmp_layer.points)
-
-    @property
-    def min_distance(self):
-        return inf if self.no_obs else self.dune_layer.min_distance
     
 
     def print_once(self, message):

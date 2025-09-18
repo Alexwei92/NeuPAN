@@ -1,0 +1,179 @@
+data_size: 100000, data_range: [-25, -25, 25, 25], batch_size: 256, epoch: 5000, valid_freq: 250, save_freq: 500, lr: 5e-5, lr_decay: 0.5, decay_freq: 1500, robot_G: tensor([[-1.4800, -0.0000],
+        [ 0.0000, -3.3500],
+        [ 1.4800, -0.0000],
+        [ 0.0000,  3.3500]], device='cuda:0'), robot_h: tensor([[0.7400],
+        [2.4790],
+        [4.2180],
+        [2.4790]], device='cuda:0')
+
+Epoch 0/5000 learning rate 5e-05 
+---------------------------------
+Losses:
+  Mu Loss:          5.69e-02   | Validate Mu Loss:            4.38e-02
+  Distance Loss:    5.95e+01   | Validate Distance Loss:      3.08e+00
+  Fa Loss:          1.24e-01   | Validate Fa Loss:            1.36e-02
+  Fb Loss:          5.37e+01   | Validate Fb Loss:            6.63e+00
+
+Epoch 250/5000 learning rate 5e-05 
+---------------------------------
+Losses:
+  Mu Loss:          2.57e-05   | Validate Mu Loss:            1.98e-05
+  Distance Loss:    1.98e-03   | Validate Distance Loss:      3.30e-03
+  Fa Loss:          2.00e-04   | Validate Fa Loss:            1.62e-04
+  Fb Loss:          4.90e-03   | Validate Fb Loss:            6.87e-03
+
+Epoch 500/5000 learning rate 5e-05 
+---------------------------------
+Losses:
+  Mu Loss:          1.25e-05   | Validate Mu Loss:            8.56e-06
+  Distance Loss:    3.88e-04   | Validate Distance Loss:      2.91e-04
+  Fa Loss:          9.86e-05   | Validate Fa Loss:            6.20e-05
+  Fb Loss:          1.25e-03   | Validate Fb Loss:            1.04e-03
+
+Epoch 750/5000 learning rate 5e-05 
+---------------------------------
+Losses:
+  Mu Loss:          8.12e-06   | Validate Mu Loss:            5.21e-06
+  Distance Loss:    2.21e-04   | Validate Distance Loss:      6.83e-05
+  Fa Loss:          5.82e-05   | Validate Fa Loss:            3.57e-05
+  Fb Loss:          8.14e-04   | Validate Fb Loss:            3.10e-04
+
+Epoch 1000/5000 learning rate 5e-05 
+---------------------------------
+Losses:
+  Mu Loss:          6.76e-06   | Validate Mu Loss:            4.79e-06
+  Distance Loss:    1.04e-03   | Validate Distance Loss:      2.37e-04
+  Fa Loss:          4.92e-05   | Validate Fa Loss:            3.59e-05
+  Fb Loss:          2.57e-03   | Validate Fb Loss:            6.82e-04
+
+Epoch 1250/5000 learning rate 5e-05 
+---------------------------------
+Losses:
+  Mu Loss:          5.12e-06   | Validate Mu Loss:            3.84e-06
+  Distance Loss:    1.70e-04   | Validate Distance Loss:      1.14e-04
+  Fa Loss:          3.57e-05   | Validate Fa Loss:            2.45e-05
+  Fb Loss:          4.69e-04   | Validate Fb Loss:            2.46e-04
+
+current learning rate: 2.5e-05
+Epoch 1500/5000 learning rate 2.5e-05 
+---------------------------------
+Losses:
+  Mu Loss:          4.56e-06   | Validate Mu Loss:            3.62e-06
+  Distance Loss:    2.88e-05   | Validate Distance Loss:      2.59e-05
+  Fa Loss:          3.14e-05   | Validate Fa Loss:            2.39e-05
+  Fb Loss:          2.34e-04   | Validate Fb Loss:            9.57e-05
+
+Epoch 1750/5000 learning rate 2.5e-05 
+---------------------------------
+Losses:
+  Mu Loss:          4.56e-06   | Validate Mu Loss:            5.13e-06
+  Distance Loss:    1.72e-04   | Validate Distance Loss:      8.42e-04
+  Fa Loss:          3.04e-05   | Validate Fa Loss:            3.72e-05
+  Fb Loss:          6.82e-04   | Validate Fb Loss:            3.27e-03
+
+Epoch 2000/5000 learning rate 2.5e-05 
+---------------------------------
+Losses:
+  Mu Loss:          4.45e-06   | Validate Mu Loss:            3.58e-06
+  Distance Loss:    3.54e-05   | Validate Distance Loss:      3.89e-05
+  Fa Loss:          2.80e-05   | Validate Fa Loss:            2.12e-05
+  Fb Loss:          3.36e-04   | Validate Fb Loss:            2.56e-04
+
+Epoch 2250/5000 learning rate 2.5e-05 
+---------------------------------
+Losses:
+  Mu Loss:          3.37e-06   | Validate Mu Loss:            3.49e-06
+  Distance Loss:    1.13e-04   | Validate Distance Loss:      2.01e-05
+  Fa Loss:          2.26e-05   | Validate Fa Loss:            2.29e-05
+  Fb Loss:          3.38e-04   | Validate Fb Loss:            1.78e-04
+
+Epoch 2500/5000 learning rate 2.5e-05 
+---------------------------------
+Losses:
+  Mu Loss:          3.14e-06   | Validate Mu Loss:            3.58e-06
+  Distance Loss:    6.32e-05   | Validate Distance Loss:      1.67e-05
+  Fa Loss:          2.02e-05   | Validate Fa Loss:            2.06e-05
+  Fb Loss:          2.30e-04   | Validate Fb Loss:            1.52e-04
+
+Epoch 2750/5000 learning rate 2.5e-05 
+---------------------------------
+Losses:
+  Mu Loss:          3.09e-06   | Validate Mu Loss:            3.62e-06
+  Distance Loss:    6.83e-05   | Validate Distance Loss:      1.70e-05
+  Fa Loss:          1.96e-05   | Validate Fa Loss:            2.12e-05
+  Fb Loss:          2.52e-04   | Validate Fb Loss:            8.10e-05
+
+current learning rate: 1.25e-05
+Epoch 3000/5000 learning rate 1.25e-05 
+---------------------------------
+Losses:
+  Mu Loss:          2.81e-06   | Validate Mu Loss:            3.63e-06
+  Distance Loss:    1.66e-05   | Validate Distance Loss:      2.70e-05
+  Fa Loss:          1.77e-05   | Validate Fa Loss:            1.96e-05
+  Fb Loss:          8.96e-05   | Validate Fb Loss:            8.34e-05
+
+Epoch 3250/5000 learning rate 1.25e-05 
+---------------------------------
+Losses:
+  Mu Loss:          2.51e-06   | Validate Mu Loss:            3.64e-06
+  Distance Loss:    5.45e-05   | Validate Distance Loss:      1.38e-05
+  Fa Loss:          1.61e-05   | Validate Fa Loss:            2.14e-05
+  Fb Loss:          1.92e-04   | Validate Fb Loss:            1.19e-04
+
+Epoch 3500/5000 learning rate 1.25e-05 
+---------------------------------
+Losses:
+  Mu Loss:          2.30e-06   | Validate Mu Loss:            3.50e-06
+  Distance Loss:    3.12e-05   | Validate Distance Loss:      1.30e-05
+  Fa Loss:          1.41e-05   | Validate Fa Loss:            2.03e-05
+  Fb Loss:          1.03e-04   | Validate Fb Loss:            1.04e-04
+
+Epoch 3750/5000 learning rate 1.25e-05 
+---------------------------------
+Losses:
+  Mu Loss:          2.38e-06   | Validate Mu Loss:            3.58e-06
+  Distance Loss:    2.57e-05   | Validate Distance Loss:      1.92e-05
+  Fa Loss:          1.49e-05   | Validate Fa Loss:            2.04e-05
+  Fb Loss:          1.01e-04   | Validate Fb Loss:            6.75e-05
+
+Epoch 4000/5000 learning rate 1.25e-05 
+---------------------------------
+Losses:
+  Mu Loss:          2.50e-06   | Validate Mu Loss:            3.78e-06
+  Distance Loss:    2.28e-05   | Validate Distance Loss:      6.16e-05
+  Fa Loss:          1.55e-05   | Validate Fa Loss:            2.40e-05
+  Fb Loss:          1.50e-04   | Validate Fb Loss:            1.77e-04
+
+Epoch 4250/5000 learning rate 1.25e-05 
+---------------------------------
+Losses:
+  Mu Loss:          1.98e-06   | Validate Mu Loss:            3.54e-06
+  Distance Loss:    1.37e-05   | Validate Distance Loss:      3.01e-05
+  Fa Loss:          1.20e-05   | Validate Fa Loss:            2.00e-05
+  Fb Loss:          5.58e-05   | Validate Fb Loss:            1.08e-04
+
+current learning rate: 6.25e-06
+Epoch 4500/5000 learning rate 6.25e-06 
+---------------------------------
+Losses:
+  Mu Loss:          1.99e-06   | Validate Mu Loss:            3.73e-06
+  Distance Loss:    1.13e-05   | Validate Distance Loss:      1.10e-05
+  Fa Loss:          1.25e-05   | Validate Fa Loss:            2.13e-05
+  Fb Loss:          4.26e-05   | Validate Fb Loss:            9.34e-05
+
+Epoch 4750/5000 learning rate 6.25e-06 
+---------------------------------
+Losses:
+  Mu Loss:          1.85e-06   | Validate Mu Loss:            3.67e-06
+  Distance Loss:    1.34e-05   | Validate Distance Loss:      1.49e-05
+  Fa Loss:          1.09e-05   | Validate Fa Loss:            2.11e-05
+  Fb Loss:          5.22e-05   | Validate Fb Loss:            7.85e-05
+
+Epoch 5000/5000 learning rate 6.25e-06 
+---------------------------------
+Losses:
+  Mu Loss:          1.75e-06   | Validate Mu Loss:            3.55e-06
+  Distance Loss:    1.16e-05   | Validate Distance Loss:      1.34e-05
+  Fa Loss:          1.01e-05   | Validate Fa Loss:            2.00e-05
+  Fb Loss:          4.80e-05   | Validate Fb Loss:            5.51e-05
+

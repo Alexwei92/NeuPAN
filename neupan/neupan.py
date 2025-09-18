@@ -273,7 +273,11 @@ class neupan(torch.nn.Module):
 
 
     def train_dune(self):
-        self.pan.dune_layer.train_dune(self.dune_train_kwargs)
+        if self.pan.is_multipolygon:
+            for dune_layer in self.pan.dune_layer_list:
+                dune_layer.train_dune(self.dune_train_kwargs)
+        else:
+            self.pan.dune_layer.train_dune(self.dune_train_kwargs)
 
 
     def reset(self):

@@ -1,0 +1,77 @@
+# mpc
+receding: 10
+step_time: 0.1
+ref_speed: 1.5
+device: 'cpu'
+time_print: True
+collision_threshold: 0.1
+
+robot:
+  kinematics: 'acker'
+  max_speed: [2.0, 0.55]
+  max_acce: [1.0, 1.0]
+  vertices: [
+    # car
+    [[-0.5, 0.74], [2.85, 0.74], [2.85, -0.74], [-0.5, -0.74]],
+    # # mower
+    # [[-1.84, 0.75], [-0.84, 0.75], [-0.84, -0.75], [-1.84, -0.75]]
+    # # single pruner
+    # [[2.69, -0.299], [3.27, -0.299], [3.27, -1.499], [2.69, -1.499]]
+    # kms sprayer
+    [[-2.1, 0.5], [-1.1, 0.5], [-1.1, -0.5], [-2.1, -0.5]],
+    [[-1.0, 2.15], [-0.5, 2.15], [-0.5, -2.15], [-1.0, -2.15]]
+    # # double pruner
+    # [[3.259, -0.175], [3.559, -0.175], [3.559, -1.5], [3.259, -1.5]],
+    # [[3.259, 0.175], [3.559, 0.175], [3.559, 1.5], [3.259, 1.5]]    
+    ]
+  wheelbase: 1.9
+
+ipath:
+  waypoints:  
+    # # mower
+    # [[0.0, 8.75, -3.1416], [-3.0, 3.25, -0.4],[-4.0, 3.75, 0], [0.5, 3.75, 0]],
+    # # single pruner
+    # [[0.0, 8.75, -3.1416], [-3.0, 3.25, -0.4],[-4.0, 3.75, 0], [-3.2, 3.75, 0]]
+    # kms sprayer
+    [[-0.5, 8.75, -3.1416], [-3.0, 3.25, -0.4],[-4.0, 3.75, 0], [0.0, 3.75, 0]]
+  curve_style: 'reeds'   # 'dubins' or reeds
+  # min_radius: 3.0
+  loop: False
+  arrive_threshold: 0.3
+  close_threshold: 0.2
+  ind_range: 10
+  arrive_index_threshold: 1
+
+pan:
+  iter_num: 3
+  dune_max_num: 100
+  nrmp_max_num: 10
+  dune_checkpoint: [
+    # # mower
+    # 'example/dune_train/model/acker_robot_mower/poly_0/model_5000.pth',
+    # 'example/dune_train/model/acker_robot_mower/poly_1/model_5000.pth',
+    # # single pruner
+    # 'example/dune_train/model/acker_robot_single_pruner/poly_0/model_5000.pth',
+    # 'example/dune_train/model/acker_robot_single_pruner/poly_1/model_5000.pth'
+    # kms sprayer
+    'example/dune_train/model/acker_robot_kms_sprayer/poly_0/model_5000.pth',
+    'example/dune_train/model/acker_robot_kms_sprayer/poly_1/model_5000.pth',
+    'example/dune_train/model/acker_robot_kms_sprayer/poly_2/model_5000.pth',
+  ]
+  iter_threshold: 0.1
+
+adjust:
+  q_s: 10.0
+  p_u: 2.0
+  eta: 15.0
+  d_max: 3.0
+  d_min: 0.1
+  bk: 0.0
+  # q_s: 1.0
+  # p_u: 1.0
+  # eta: 15.0
+  # d_max: 1.0
+  # d_min: 0.1
+  # bk: 1.0
+
+

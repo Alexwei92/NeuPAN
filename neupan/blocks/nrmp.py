@@ -20,7 +20,6 @@ along with NeuPAN planner. If not, see <https://www.gnu.org/licenses/>.
 
 import torch
 import cvxpy as cp
-import numpy as np
 from neupan.robot import robot
 from neupan.configuration import to_device, value_to_tensor, np_to_tensor
 from cvxpylayers.torch import CvxpyLayer
@@ -50,8 +49,15 @@ class NRMP(torch.nn.Module):
         self.T = receding
         self.dt = step_time
         self.robot = robot
-        self.G = np_to_tensor(robot.G)
-        self.h = np_to_tensor(robot.h)
+        
+        self.is_multipolygon = robot.is_multipolygon
+        self.num_of_polygons = robot.num_of_polygons
+        if self.is_multipolygon:
+            self.G_list = [np_to_tensor(G) for G in robot.G_list]
+            self.h_list = [np_to_tensor(h) for h in robot.h_list]
+        else:
+            self.G = np_to_tensor(robot.G)
+            self.h = np_to_tensor(robot.h)
 
         self.max_num = nrmp_max_num
         self.no_obs = False if nrmp_max_num > 0 else True
@@ -102,9 +108,18 @@ class NRMP(torch.nn.Module):
         """
 
         if point_list:
-            self.obstacle_points = point_list[0][
-                :, : self.max_num
-            ]  # current obstacle points considered in the optimization
+            if self.is_multipolygon:
+                all_points = []
+                for i in range(self.num_of_polygons):
+                    polygon_points = point_list[i][0][:, :self.max_num]
+                    all_points.append(polygon_points)
+                concatenated_points = torch.cat(all_points, dim=1)
+                unique_points = torch.unique(concatenated_points, dim=1)
+                self.obstacle_points = unique_points
+            else:
+                self.obstacle_points = point_list[0][
+                    :, : self.max_num
+                ]  # current obstacle points considered in the optimization
 
         parameter_values = self.generate_parameter_value(
             nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list
@@ -173,29 +188,53 @@ class NRMP(torch.nn.Module):
         if self.no_obs:
             return []
         else:
-            fa_list = [to_device(torch.zeros((self.max_num, 2))) for t in range(self.T)]
-            fb_list = [to_device(torch.zeros((self.max_num, 1))) for t in range(self.T)]
+            fa_list = [to_device(torch.zeros((self.max_num * self.num_of_polygons, 2))) for t in range(self.T)]
+            fb_list = [to_device(torch.zeros((self.max_num * self.num_of_polygons, 1))) for t in range(self.T)]
 
             if not mu_list:
                 return fa_list + fb_list
             else:
                 for t in range(self.T):
-                    mu, lam, point = mu_list[t + 1], lam_list[t + 1], point_list[t + 1]
-                    fa = lam.T
-                    temp = (
-                        torch.bmm(lam.T.unsqueeze(1), point.T.unsqueeze(2))
-                    ).squeeze(1)
+                    if self.is_multipolygon:
+                        for i in range(self.num_of_polygons):
+                            mu, lam, point = mu_list[i][t + 1], lam_list[i][t + 1], point_list[i][t + 1]
+                            fa = lam.T
+                            temp = (
+                                torch.bmm(lam.T.unsqueeze(1), point.T.unsqueeze(2))
+                            ).squeeze(1)
 
-                    fb = temp + mu.T @ self.h
+                            fb = temp + mu.T @ self.h_list[i]
 
-                    # lamb = mu.T @ self.h + torch.matmul(fa.unsqueeze(1), point.T.unsqueeze(2)).squeeze(1)
+                            # lamb = mu.T @ self.h + torch.matmul(fa.unsqueeze(1), point.T.unsqueeze(2)).squeeze(1)
 
-                    pn = min(mu.shape[1], self.max_num)
-                    fa_list[t][:pn, :] = fa[:pn, :]
-                    fb_list[t][:pn, :] = fb[:pn, :]
+                            pn = min(mu.shape[1], self.max_num)
+                            start_idx = i * self.max_num
+                            end_idx = start_idx + pn
+                            
+                            fa_list[t][start_idx:end_idx, :] = fa[:pn, :]
+                            fb_list[t][start_idx:end_idx, :] = fb[:pn, :]
+                            
+                            if pn < self.max_num:
+                                fa_list[t][end_idx:start_idx + self.max_num, :] = fa[0, :]
+                                fb_list[t][end_idx:start_idx + self.max_num, :] = fb[0, :]
+                        
+                    else:
+                        mu, lam, point = mu_list[t + 1], lam_list[t + 1], point_list[t + 1]
+                        fa = lam.T
+                        temp = (
+                            torch.bmm(lam.T.unsqueeze(1), point.T.unsqueeze(2))
+                        ).squeeze(1)
 
-                    fa_list[t][pn:, :] = fa[0, :]
-                    fb_list[t][pn:, :] = fb[0, :]
+                        fb = temp + mu.T @ self.h
+
+                        # lamb = mu.T @ self.h + torch.matmul(fa.unsqueeze(1), point.T.unsqueeze(2)).squeeze(1)
+
+                        pn = min(mu.shape[1], self.max_num)
+                        fa_list[t][:pn, :] = fa[:pn, :]
+                        fb_list[t][:pn, :] = fb[:pn, :]
+
+                        fa_list[t][pn:, :] = fa[0, :]
+                        fb_list[t][pn:, :] = fb[0, :]
 
             return fa_list + fb_list
 

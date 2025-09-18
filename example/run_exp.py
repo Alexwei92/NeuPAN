@@ -20,7 +20,7 @@ def main(
     full=False,
     no_display=True,
     point_vel=False,
-    max_steps=1000, 
+    max_steps=2000, 
     reverse=False,
 ):
     
