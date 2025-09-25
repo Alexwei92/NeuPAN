@@ -113,8 +113,7 @@ class NRMP(torch.nn.Module):
 
         if point_list:
             if self.is_multipolygon:
-                all_points = []
-
+                # all_points = []
                 # for i in range(self.num_of_polygons):
                 #     polygon_points = point_list[i][0][:, :self.max_num]
                 #     all_points.append(polygon_points)
@@ -124,11 +123,14 @@ class NRMP(torch.nn.Module):
 
                 sorted_ids_list = []
                 for i in range(self.T + 1):
-                    all_distances = torch.cat([distance_list[poly_id][i] for poly_id in range(self.num_of_polygons)], dim=0)
-                    distance_length = torch.tensor([len(distance_list[poly_id][i]) for poly_id in range(self.num_of_polygons)])
+                    distance_per_poly_slices = [distance_list[poly_id][i][:min(self.max_num, len(distance_list[poly_id][i]))] 
+                                                for poly_id in range(self.num_of_polygons)]
+                    all_distances = torch.cat(distance_per_poly_slices, dim=0)
+                    
+                    distance_slice_lengths = torch.tensor([len(distance_poly_slice) for distance_poly_slice in distance_per_poly_slices])
 
-                    poly_id = torch.repeat_interleave(torch.arange(self.num_of_polygons), distance_length)
-                    local_id = torch.cat([torch.arange(L) for L in distance_length.tolist()], dim=0)
+                    poly_id = torch.repeat_interleave(torch.arange(self.num_of_polygons), distance_slice_lengths)
+                    local_id = torch.cat([torch.arange(L) for L in distance_slice_lengths.tolist()], dim=0)
 
                     topk_distance, topk_id = torch.topk(all_distances, min(self.max_num, all_distances.numel()), largest=False)
                     topk_poly_id = poly_id[topk_id]
@@ -138,9 +140,11 @@ class NRMP(torch.nn.Module):
                     sorted_ids_list.append(sorted_ids)
 
                     if i == 0:
+                        all_points = []
                         for poly_id, local_id in sorted_ids:
                             all_points.append(point_list[poly_id][0][:, local_id : local_id+1])
                         self.obstacle_points = torch.cat(all_points, dim=1)
+
             else:
                 self.obstacle_points = point_list[0][
                     :, : self.max_num
