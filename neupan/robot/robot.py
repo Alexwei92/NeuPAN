@@ -134,16 +134,20 @@ class robot:
         else:
             self.para_gamma_c = [
                 cp.Parameter(
-                    (max_num * self.num_of_polygons, 2),
-                    value=np.zeros((max_num * self.num_of_polygons, 2)),
+                    # (max_num * self.num_of_polygons, 2),
+                    # value=np.zeros((max_num * self.num_of_polygons, 2)),
+                    (max_num, 2),
+                    value=np.zeros((max_num, 2)),
                     name="para_gamma_c" + str(i),
                 )
                 for i in range(self.T)
             ]  # lam.T, fa
             self.para_zeta_a = [
                 cp.Parameter(
-                    (max_num * self.num_of_polygons, 1),
-                    value=np.zeros((max_num * self.num_of_polygons, 1)),
+                    # (max_num * self.num_of_polygons, 1),
+                    # value=np.zeros((max_num * self.num_of_polygons, 1)),
+                    (max_num, 1),
+                    value=np.zeros((max_num, 1)),
                     name="para_zeta_a" + str(i),
                 )
                 for i in range(self.T)

@@ -47,7 +47,7 @@ ipath:
 pan:
   iter_num: 3
   dune_max_num: 100
-  nrmp_max_num: 10
+  nrmp_max_num: 15
   dune_checkpoint: [
     # # mower
     # 'example/dune_train/model/acker_robot_mower/poly_0/model_5000.pth',

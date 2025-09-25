@@ -23,7 +23,7 @@ from neupan.blocks import NRMP, DUNE
 from math import inf
 from typing import Optional
 from neupan.configuration import to_device, tensor_to_np
-from neupan.util import downsample_decimation
+from neupan.util import downsample_decimation, time_it
 
 class PAN(torch.nn.Module):
     """
@@ -144,30 +144,40 @@ class PAN(torch.nn.Module):
                 point_flow_list, R_list, obs_points_list = self.generate_point_flow(
                     nom_s, obs_points, point_velocities
                 )
-                if self.is_multipolygon:
-                    mu_list, lam_list, sort_point_list = [], [], []
-                    for i, dune_layer in enumerate(self.dune_layer_list):
-                        mu_list_i, lam_list_i, sort_point_list_i = dune_layer(
-                            point_flow_list, R_list, obs_points_list
-                        )
-                        mu_list.append(mu_list_i)
-                        lam_list.append(lam_list_i)
-                        sort_point_list.append(sort_point_list_i)
-                else:  
-                    mu_list, lam_list, sort_point_list = self.dune_layer(
-                        point_flow_list, R_list, obs_points_list
-                    )
+                mu_list, lam_list, sort_point_list, distance_list = self.forward_dune(
+                    point_flow_list, R_list, obs_points_list
+                )
             else:
-                mu_list, lam_list, sort_point_list = [], [], []
+                mu_list, lam_list, sort_point_list, distance_list = [], [], [], []
                 
             nom_s, nom_u, nom_distance = self.nrmp_layer(
-                nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, sort_point_list
+                nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, sort_point_list, distance_list
             )
 
             if self.stop_criteria(nom_s, nom_u, mu_list, lam_list):
                 break
 
         return nom_s, nom_u, nom_distance
+
+
+    @time_it('- dune forward')
+    def forward_dune(self, point_flow_list: list[torch.Tensor], R_list: list[torch.Tensor], obs_points_list: list[torch.Tensor]):
+        if self.is_multipolygon:
+            mu_list, lam_list, sort_point_list, distance_list = [], [], [], []
+            for i, dune_layer in enumerate(self.dune_layer_list):
+                mu_list_i, lam_list_i, sort_point_list_i, distance_list_i = dune_layer(
+                    point_flow_list, R_list, obs_points_list
+                )
+                mu_list.append(mu_list_i)
+                lam_list.append(lam_list_i)
+                sort_point_list.append(sort_point_list_i)
+                distance_list.append(distance_list_i)
+        else:  
+            mu_list, lam_list, sort_point_list, distance_list = self.dune_layer(
+                point_flow_list, R_list, obs_points_list
+            )
+
+        return mu_list, lam_list, sort_point_list, distance_list
 
 
     def generate_point_flow(self, nom_s: torch.Tensor, obs_points: torch.Tensor, point_velocities: Optional[torch.Tensor]=None):
