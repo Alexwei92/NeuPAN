@@ -50,7 +50,7 @@ class DUNE(torch.nn.Module):
 
 
         
-    @time_it('- dune forward')
+    # @time_it('- dune forward')
     def forward(self, point_flow: list[torch.Tensor], R_list: list[torch.Tensor], obs_points_list: list[torch.Tensor]=[]) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
 
         '''
@@ -67,7 +67,7 @@ class DUNE(torch.nn.Module):
             sort_point_list: list of point tensor, each element is a tensor of shape (state_dim, num_points); list length: T+1; 
         '''
 
-        mu_list, lam_list, sort_point_list = [], [], []
+        mu_list, lam_list, sort_point_list, distance_list = [], [], [], []
         self.obstacle_points = obs_points_list[0] # current obstacle points considered in the dune at time 0
 
         total_points = torch.hstack(point_flow)
@@ -97,8 +97,9 @@ class DUNE(torch.nn.Module):
             mu_list.append(mu[:, sort_indices])
             lam_list.append(lam[:, sort_indices])
             sort_point_list.append(obs_points_list[index][:, sort_indices])
+            distance_list.append(distance[sort_indices])
 
-        return mu_list, lam_list, sort_point_list
+        return mu_list, lam_list, sort_point_list, distance_list
 
 
     def cal_objective_distance(self, mu: torch.Tensor, p0: torch.Tensor) -> torch.Tensor:

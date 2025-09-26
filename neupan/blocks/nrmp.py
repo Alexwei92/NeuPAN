@@ -96,6 +96,7 @@ class NRMP(torch.nn.Module):
         mu_list: Optional[List[torch.Tensor]] = None,
         lam_list: Optional[List[torch.Tensor]] = None,
         point_list: Optional[List[torch.Tensor]] = None,
+        distance_list: Optional[List[torch.Tensor]] = None,
     ):
         """
         nom_s: nominal state, 3 * (T+1)
@@ -105,24 +106,52 @@ class NRMP(torch.nn.Module):
         mu_list: list of mu matrix, (max_num, )
         lam_list: list of lam matrix, (max_num, 1)
         point_list: list of obstacle points, (max_num, 2)
+        distance_list: list of distance, (max_num, )
         """
+
+        sorted_ids_list = None
 
         if point_list:
             if self.is_multipolygon:
-                all_points = []
-                for i in range(self.num_of_polygons):
-                    polygon_points = point_list[i][0][:, :self.max_num]
-                    all_points.append(polygon_points)
-                concatenated_points = torch.cat(all_points, dim=1)
-                unique_points = torch.unique(concatenated_points, dim=1)
-                self.obstacle_points = unique_points
+                # all_points = []
+                # for i in range(self.num_of_polygons):
+                #     polygon_points = point_list[i][0][:, :self.max_num]
+                #     all_points.append(polygon_points)
+                # concatenated_points = torch.cat(all_points, dim=1)
+                # unique_points = torch.unique(concatenated_points, dim=1)
+                # self.obstacle_points = unique_points
+
+                sorted_ids_list = []
+                for i in range(self.T + 1):
+                    distance_per_poly_slices = [distance_list[poly_id][i][:min(self.max_num, len(distance_list[poly_id][i]))] 
+                                                for poly_id in range(self.num_of_polygons)]
+                    all_distances = torch.cat(distance_per_poly_slices, dim=0)
+                    
+                    distance_slice_lengths = torch.tensor([len(distance_poly_slice) for distance_poly_slice in distance_per_poly_slices])
+
+                    poly_id = torch.repeat_interleave(torch.arange(self.num_of_polygons), distance_slice_lengths)
+                    local_id = torch.cat([torch.arange(L) for L in distance_slice_lengths.tolist()], dim=0)
+
+                    topk_distance, topk_id = torch.topk(all_distances, min(self.max_num, all_distances.numel()), largest=False)
+                    topk_poly_id = poly_id[topk_id]
+                    topk_local_id = local_id[topk_id]
+
+                    sorted_ids = torch.stack((topk_poly_id, topk_local_id), dim=1)
+                    sorted_ids_list.append(sorted_ids)
+
+                    if i == 0:
+                        all_points = []
+                        for poly_id, local_id in sorted_ids:
+                            all_points.append(point_list[poly_id][0][:, local_id : local_id+1])
+                        self.obstacle_points = torch.cat(all_points, dim=1)
+
             else:
                 self.obstacle_points = point_list[0][
                     :, : self.max_num
                 ]  # current obstacle points considered in the optimization
 
         parameter_values = self.generate_parameter_value(
-            nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list
+            nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list, sorted_ids_list
         )
 
         solutions = self.nrmp_layer(*parameter_values, solver_args={"solve_method": self.solver}) # see cvxpylayers and cvxpy for more details
@@ -134,7 +163,7 @@ class NRMP(torch.nn.Module):
         return opt_solution_state, opt_solution_vel, nom_d
 
     def generate_parameter_value(
-        self, nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list
+        self, nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list, sorted_ids_list
     ):
         
         adjust_value_list = self.generate_adjust_parameter_value()
@@ -144,7 +173,7 @@ class NRMP(torch.nn.Module):
         )
 
         coefficient_value_list = self.generate_coefficient_parameter_value(
-            mu_list, lam_list, point_list
+            mu_list, lam_list, point_list, sorted_ids_list
         )
 
         return state_value_list + coefficient_value_list + adjust_value_list
@@ -171,7 +200,7 @@ class NRMP(torch.nn.Module):
         )
 
 
-    def generate_coefficient_parameter_value(self, mu_list, lam_list, point_list):
+    def generate_coefficient_parameter_value(self, mu_list, lam_list, point_list, sorted_ids_list):
         """
         generate the parameters values for obstacle point avoidance
 
@@ -188,35 +217,53 @@ class NRMP(torch.nn.Module):
         if self.no_obs:
             return []
         else:
-            fa_list = [to_device(torch.zeros((self.max_num * self.num_of_polygons, 2))) for t in range(self.T)]
-            fb_list = [to_device(torch.zeros((self.max_num * self.num_of_polygons, 1))) for t in range(self.T)]
+            # fa_list = [to_device(torch.zeros((self.max_num * self.num_of_polygons, 2))) for t in range(self.T)]
+            # fb_list = [to_device(torch.zeros((self.max_num * self.num_of_polygons, 1))) for t in range(self.T)]
+            fa_list = [to_device(torch.zeros((self.max_num, 2))) for t in range(self.T)]
+            fb_list = [to_device(torch.zeros((self.max_num, 1))) for t in range(self.T)]
 
             if not mu_list:
                 return fa_list + fb_list
             else:
                 for t in range(self.T):
-                    if self.is_multipolygon:
-                        for i in range(self.num_of_polygons):
-                            mu, lam, point = mu_list[i][t + 1], lam_list[i][t + 1], point_list[i][t + 1]
+                    if self.is_multipolygon and (sorted_ids_list is not None):
+                        # for i in range(self.num_of_polygons):
+                        #     mu, lam, point = mu_list[i][t + 1], lam_list[i][t + 1], point_list[i][t + 1]
+                        #     fa = lam.T
+                        #     temp = (
+                        #         torch.bmm(lam.T.unsqueeze(1), point.T.unsqueeze(2))
+                        #     ).squeeze(1)
+
+                        #     fb = temp + mu.T @ self.h_list[i]
+
+                        #     # lamb = mu.T @ self.h + torch.matmul(fa.unsqueeze(1), point.T.unsqueeze(2)).squeeze(1)
+
+                        #     pn = min(mu.shape[1], self.max_num)
+                        #     start_idx = i * self.max_num
+                        #     end_idx = start_idx + pn
+                            
+                        #     fa_list[t][start_idx:end_idx, :] = fa[:pn, :]
+                        #     fb_list[t][start_idx:end_idx, :] = fb[:pn, :]
+                            
+                        #     if pn < self.max_num:
+                        #         fa_list[t][end_idx:start_idx + self.max_num, :] = fa[0, :]
+                        #         fb_list[t][end_idx:start_idx + self.max_num, :] = fb[0, :]
+
+                        for i, (poly_id, local_id) in enumerate(sorted_ids_list[t]):
+                            mu, lam, point = mu_list[poly_id][t+1][:, local_id:local_id+1], lam_list[poly_id][t+1][:, local_id:local_id+1], point_list[poly_id][t+1][:, local_id:local_id+1]
                             fa = lam.T
                             temp = (
                                 torch.bmm(lam.T.unsqueeze(1), point.T.unsqueeze(2))
                             ).squeeze(1)
 
-                            fb = temp + mu.T @ self.h_list[i]
+                            fb = temp + mu.T @ self.h_list[poly_id]
 
-                            # lamb = mu.T @ self.h + torch.matmul(fa.unsqueeze(1), point.T.unsqueeze(2)).squeeze(1)
+                            fa_list[t][i, :] = fa[:, :]
+                            fb_list[t][i, :] = fb[:, :]
 
-                            pn = min(mu.shape[1], self.max_num)
-                            start_idx = i * self.max_num
-                            end_idx = start_idx + pn
-                            
-                            fa_list[t][start_idx:end_idx, :] = fa[:pn, :]
-                            fb_list[t][start_idx:end_idx, :] = fb[:pn, :]
-                            
-                            if pn < self.max_num:
-                                fa_list[t][end_idx:start_idx + self.max_num, :] = fa[0, :]
-                                fb_list[t][end_idx:start_idx + self.max_num, :] = fb[0, :]
+                        pn = min(len(sorted_ids_list[t]), self.max_num)
+                        fa_list[t][pn:, :] = fa_list[t][0, :]
+                        fb_list[t][pn:, :] = fb_list[t][0, :]
                         
                     else:
                         mu, lam, point = mu_list[t + 1], lam_list[t + 1], point_list[t + 1]
