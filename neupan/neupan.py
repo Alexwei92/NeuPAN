@@ -67,6 +67,7 @@ class neupan(torch.nn.Module):
 
         configuration.device = torch.device(device)
         configuration.time_print = kwargs.get("time_print", False)
+        configuration.log_cost = kwargs.get("log_cost", False)
         self.collision_threshold = kwargs.get("collision_threshold", 0.1)
 
         # initialization

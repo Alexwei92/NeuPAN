@@ -22,6 +22,7 @@ import torch
 from neupan.blocks import NRMP, DUNE
 from math import inf
 from typing import Optional
+from neupan import configuration
 from neupan.configuration import to_device, tensor_to_np
 from neupan.util import downsample_decimation, time_it
 
@@ -156,6 +157,10 @@ class PAN(torch.nn.Module):
 
             if self.stop_criteria(nom_s, nom_u, mu_list, lam_list):
                 break
+
+        if configuration.log_cost:
+            print(f"costs: {self.nrmp_layer.costs}")
+            print("-" * 50)
 
         return nom_s, nom_u, nom_distance
 

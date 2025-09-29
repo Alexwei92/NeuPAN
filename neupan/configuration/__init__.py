@@ -24,6 +24,7 @@ import numpy as np
 
 device = torch.device("cpu")
 time_print = False
+log_cost = False
 
 def np_to_tensor(array):
         

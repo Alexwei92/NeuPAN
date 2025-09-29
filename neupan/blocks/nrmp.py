@@ -20,6 +20,7 @@ along with NeuPAN planner. If not, see <https://www.gnu.org/licenses/>.
 
 import torch
 import cvxpy as cp
+from neupan import configuration
 from neupan.robot import robot
 from neupan.configuration import to_device, value_to_tensor, np_to_tensor
 from cvxpylayers.torch import CvxpyLayer
@@ -85,6 +86,8 @@ class NRMP(torch.nn.Module):
 
         self.obstacle_points = None
         self.solver = kwargs.get("solver", "ECOS") 
+
+        self.costs_dict = {}
 
     @time_it("- nrmp forward")
     def forward(
@@ -160,6 +163,14 @@ class NRMP(torch.nn.Module):
 
         nom_d = None if self.no_obs else solutions[2]
 
+        # Update costs
+        if configuration.log_cost:
+            self.costs_dict.update(self.get_costs(
+                opt_solution_state, opt_solution_vel, nom_d,
+                nom_s, nom_u, ref_s, ref_us,
+                mu_list, lam_list, point_list, sorted_ids_list
+            ))
+            
         return opt_solution_state, opt_solution_vel, nom_d
 
     def generate_parameter_value(
@@ -410,3 +421,58 @@ class NRMP(torch.nn.Module):
         """
 
         return self.obstacle_points
+
+
+    @property
+    def costs(self):
+        return self.costs_dict
+
+
+    def get_costs(self, opt_solution_state, opt_solution_vel, nom_d, nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list, sorted_ids_list):
+        costs_dict = {}
+
+        with torch.no_grad():
+            # state and control costs
+            diff_u = self.p_u * (opt_solution_vel[0, :] - ref_us)
+            diff_s = self.q_s * (opt_solution_state - ref_s)
+
+            psi_cost = torch.sum(diff_s[2:3, :]**2).item()
+            state_cost = torch.sum(diff_s**2)
+            control_cost = torch.sum(diff_u**2)
+
+            # proximal cost
+            proximal_cost = 0.5 * self.bk * torch.sum((opt_solution_state - nom_s)**2)
+
+            # C1 cost
+            if not self.no_obs:
+                C1_cost = -self.eta * torch.sum(nom_d)
+            else:
+                C1_cost = torch.tensor(0.0)
+
+            # I cost
+            if not self.no_obs:
+                coefficient_value_list = self.generate_coefficient_parameter_value(
+                    mu_list, lam_list, point_list, sorted_ids_list
+                )
+                para_gamma_c = coefficient_value_list[:self.T]
+                para_zeta_a = coefficient_value_list[self.T:]
+
+                nom_t = nom_s[0:2, 1:]
+                I_list = []
+                for t in range(self.T):
+                    I_dpp = para_gamma_c[t] @ nom_t[:, t:t+1] - para_zeta_a[t] - nom_d[0, t]
+                    I_list.append(I_dpp)                   
+                I_array = torch.stack(I_list, dim=0)
+                I_cost = 0.5 * self.ro_obs * torch.sum(torch.relu(-I_array)**2)
+            else:
+                I_cost = torch.tensor(0.0)
+
+        total_cost = state_cost + control_cost + proximal_cost + C1_cost + I_cost
+        costs_dict['total'] = total_cost.item()
+        costs_dict['s'] = state_cost.item()
+        costs_dict['u'] = control_cost.item() 
+        costs_dict['prox'] = proximal_cost.item()
+        costs_dict['C1'] = C1_cost.item()
+        costs_dict['I'] = I_cost.item()
+
+        return costs_dict
