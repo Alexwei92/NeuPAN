@@ -100,6 +100,7 @@ class NRMP(torch.nn.Module):
         lam_list: Optional[List[torch.Tensor]] = None,
         point_list: Optional[List[torch.Tensor]] = None,
         distance_list: Optional[List[torch.Tensor]] = None,
+        actual_vel: Optional[torch.Tensor] = None,
     ):
         """
         nom_s: nominal state, 3 * (T+1)
@@ -110,6 +111,7 @@ class NRMP(torch.nn.Module):
         lam_list: list of lam matrix, (max_num, 1)
         point_list: list of obstacle points, (max_num, 2)
         distance_list: list of distance, (max_num, )
+        actual_vel: actual velocity of the robot, 2 * 1
         """
 
         sorted_ids_list = None
@@ -154,7 +156,7 @@ class NRMP(torch.nn.Module):
                 ]  # current obstacle points considered in the optimization
 
         parameter_values = self.generate_parameter_value(
-            nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list, sorted_ids_list
+            nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list, sorted_ids_list, actual_vel
         )
 
         solutions = self.nrmp_layer(*parameter_values, solver_args={"solve_method": self.solver}) # see cvxpylayers and cvxpy for more details
@@ -174,13 +176,13 @@ class NRMP(torch.nn.Module):
         return opt_solution_state, opt_solution_vel, nom_d
 
     def generate_parameter_value(
-        self, nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list, sorted_ids_list
+        self, nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list, sorted_ids_list, actual_vel
     ):
         
         adjust_value_list = self.generate_adjust_parameter_value()
 
         state_value_list = self.robot.generate_state_parameter_value(
-            nom_s, nom_u, self.q_s * ref_s, self.p_u * ref_us
+            nom_s, nom_u, self.q_s * ref_s, self.p_u * ref_us, actual_vel
         )
 
         coefficient_value_list = self.generate_coefficient_parameter_value(

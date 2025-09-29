@@ -34,6 +34,7 @@ def main(
     for i in range(max_steps):
 
         robot_state = env.get_robot_state()
+        robot_vel = env.get_robot_velocity()
         lidar_scan = env.get_lidar_scan()
 
         if point_vel:
@@ -42,7 +43,7 @@ def main(
             points = neupan_planner.scan_to_point(robot_state, lidar_scan)
             point_velocities = None
 
-        action, info = neupan_planner(robot_state, points, point_velocities)
+        action, info = neupan_planner(robot_state, points, point_velocities, robot_vel)
 
         if info["stop"]:
             print("NeuPAN stops because of minimum distance")
