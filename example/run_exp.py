@@ -53,8 +53,8 @@ def main(
 
         env.draw_points(neupan_planner.dune_points, s=25, c="g", refresh=True)
         env.draw_points(neupan_planner.nrmp_points, s=13, c="r", refresh=True)
-        env.draw_trajectory(neupan_planner.opt_trajectory, "r", refresh=True)
-        env.draw_trajectory(neupan_planner.ref_trajectory, "b", refresh=True)
+        env.draw_trajectory(neupan_planner.opt_trajectory, "r", linewidth=2, refresh=True)
+        env.draw_trajectory(neupan_planner.ref_trajectory, "b", linewidth=2, refresh=True)
 
         env.step(action)
         env.render()
