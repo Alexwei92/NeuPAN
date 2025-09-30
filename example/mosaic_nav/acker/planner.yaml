@@ -5,6 +5,7 @@ ref_speed: 4.0
 device: 'cpu'
 time_print: True
 collision_threshold: 0.1
+log_cost: True
 
 robot:
   kinematics: 'acker'
@@ -39,10 +40,10 @@ pan:
 adjust:
   q_s: 1.0
   p_u: 0.6
-  eta: 20.059
-  d_max: 2.0
-  d_min: 0.1
-  bk: 1.0
+  eta: 10.0
+  d_max: 1.0
+  d_min: 0.5
+  bk: 0.0
   # q_s: 0.5
   # p_u: 0.3
   # eta: 15.0
