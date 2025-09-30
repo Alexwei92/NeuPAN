@@ -67,6 +67,7 @@ class neupan(torch.nn.Module):
 
         configuration.device = torch.device(device)
         configuration.time_print = kwargs.get("time_print", False)
+        configuration.log_cost = kwargs.get("log_cost", False)
         self.collision_threshold = kwargs.get("collision_threshold", 0.1)
 
         # initialization
@@ -102,11 +103,12 @@ class neupan(torch.nn.Module):
         return cls(**config)
 
     @time_it("neupan forward")
-    def forward(self, state, points, velocities=None):
+    def forward(self, state, points, velocities=None, actual_vel=None):
         """
         state: current state of the robot, matrix (3, 1), x, y, theta
         points: current input obstacle point positions, matrix (2, N), N is the number of obstacle points.
         velocities: current velocity of each obstacle point, matrix (2, N), N is the number of obstacle points. vx, vy
+        actual_vel: actual velocity of the robot, matrix (2, 1)
         """
 
         assert state.shape[0] >= 3
@@ -125,9 +127,10 @@ class neupan(torch.nn.Module):
         point_velocities_tensor = (
             np_to_tensor(velocities) if velocities is not None else None
         )
+        actual_vel_tensor = np_to_tensor(actual_vel) if actual_vel is not None else None
 
         opt_state_tensor, opt_vel_tensor, opt_distance_tensor = self.pan(
-            *nom_input_tensor, obstacle_points_tensor, point_velocities_tensor
+            *nom_input_tensor, obstacle_points_tensor, point_velocities_tensor, actual_vel_tensor
         )
 
         opt_state_np, opt_vel_np = tensor_to_np(opt_state_tensor), tensor_to_np(
