@@ -41,7 +41,7 @@ class NRMP(torch.nn.Module):
         d_min: float = 0.1,
         q_s: float = 1.0,
         p_u: float = 1.0,
-        ro_obs: float = 400,
+        ro_obs: float = 500,
         bk: float = 0.1,
         **kwargs,
     ) -> None:

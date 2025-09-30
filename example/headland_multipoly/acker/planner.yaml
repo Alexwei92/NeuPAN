@@ -75,11 +75,4 @@ adjust:
   d_min: 0.1
   bk: 0.0
   ro_obs: 1000
-  # q_s: 1.0
-  # p_u: 1.0
-  # eta: 15.0
-  # d_max: 1.0
-  # d_min: 0.1
-  # bk: 1.0
-
 

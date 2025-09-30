@@ -73,7 +73,7 @@ class PAN(torch.nn.Module):
             d_min=adjust_kwargs.get("d_min", 0.1),
             q_s=adjust_kwargs.get("q_s", 1.0),
             p_u=adjust_kwargs.get("p_u", 1.0),
-            ro_obs=adjust_kwargs.get("ro_obs", 400),
+            ro_obs=adjust_kwargs.get("ro_obs", 500),
             bk=adjust_kwargs.get("bk", 0.1),
             solver=adjust_kwargs.get("solver", "ECOS"),
         )
