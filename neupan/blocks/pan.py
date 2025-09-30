@@ -219,10 +219,10 @@ class PAN(torch.nn.Module):
                         # Correct: append scaled points to point list, scaled distances to distance list
                         sort_point_list_mosaic.append(sort_point_scaled_from_unit)
                         distance_list_mosaic.append(distance_scaled_from_unit)
-                        print(f"mu_scaled_from_unit:{mu_list_scaled[0]}")
-                        print(f"lam_scaled_from_unit:{lam_list_scaled[0]}")
-                        print(f"distance_scaled_from_unit:{distance_list_mosaic[0]}")
-                        print(f"sort_point_scaled_from_unit:{sort_point_list_mosaic[0]}")
+                        # print(f"mu_scaled_from_unit:{mu_list_scaled[0]}")
+                        # print(f"lam_scaled_from_unit:{lam_list_scaled[0]}")
+                        # print(f"distance_scaled_from_unit:{distance_list_mosaic[0]}")
+                        # print(f"sort_point_scaled_from_unit:{sort_point_list_mosaic[0]}")
                         # print(f"")
                     # Keep poly-major structure: [poly][time] tensors
                     mu_list = mu_list_mosaic
@@ -439,8 +439,8 @@ class PAN(torch.nn.Module):
             return None
         elif self.is_multipolygon:
             return tensor_to_np(self.dune_layer_list[0].points)
-        # elif self.is_mosaic:
-        #     return tensor_to_np(self._points) if self._points is not None else None
+        elif self.is_mosaic:
+            return tensor_to_np(self._points) if self._points is not None else None
         else:
             return tensor_to_np(self.dune_layer.points)
 
