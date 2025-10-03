@@ -8,8 +8,7 @@ import warnings
 warnings.filterwarnings(
     "ignore",
     category=UserWarning,
-    message=r"Converting [GA] to a CSC matrix; may take a while\.",
-    module=r"^ecos(\.ecos)?$",
+    message=r"Converting [GA] to a CSC",
 )
 
 def main(
