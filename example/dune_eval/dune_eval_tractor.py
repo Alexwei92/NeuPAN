@@ -49,7 +49,7 @@ def main(
 ):
     
     env = irsim.make(env_file)
-    env.step()
+    env.step(np.array([0, 0]))
     neupan_planner = neupan.init_from_yaml(planner_file, device='cuda', time_print=True)
 
     robot_state = env.get_robot_state()
