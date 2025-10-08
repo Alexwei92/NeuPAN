@@ -1,7 +1,7 @@
 # mpc
 receding: 10
 step_time: 0.1
-ref_speed: 3.0
+ref_speed: 2.0
 device: 'cpu'
 time_print: False
 collision_threshold: 0.1
