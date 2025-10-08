@@ -274,7 +274,8 @@ class robot:
         constraints += [ cp.abs(self.indep_u[:, 1:] - self.indep_u[:, :-1] ) <= self.acce_bound ] 
         constraints += [ cp.abs(self.indep_u) <= self.speed_bound]
         constraints += [ self.indep_s[:, 0:1] == self.para_s[:, 0:1] ]
-        constraints += [ cp.abs(self.indep_u[:, 0:1] - self.para_actual_vel[:, 0:1]) <= self.acce_bound ]
+        # constraints += [ cp.abs(self.indep_u[:, 0:1] - self.para_actual_vel[:, 0:1]) <= self.acce_bound ]
+        constraints += [ cp.abs(self.indep_u[:, 0:1] - self.para_actual_vel[:, 0:1]) <= 999 ]
         return constraints
     
 
