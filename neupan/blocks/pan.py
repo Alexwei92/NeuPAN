@@ -25,6 +25,7 @@ from typing import Optional
 from neupan import configuration
 from neupan.configuration import to_device, tensor_to_np
 from neupan.util import downsample_decimation, time_it
+from neupan import configuration
 
 class PAN(torch.nn.Module):
     """
@@ -135,7 +136,10 @@ class PAN(torch.nn.Module):
             - obs_points: (2, number of obs points), point cloud, global coordinate
             - velocities: (2, number of obs points), velocity of each obs point
             - actual_vel: (2, 1), actual velocity of the robot
+<<<<<<< HEAD
 
+=======
+>>>>>>> workable_mosaic
         output:
             - opt_vel: optimal velocity tensor; (2, receding)
             - opt_state: optimal state array  (3, receding+1)

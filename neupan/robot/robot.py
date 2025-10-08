@@ -153,7 +153,6 @@ class robot:
         self.para_gamma_a = cp.Parameter((3, self.T+1), name='para_gamma_a') 
         self.para_gamma_b = cp.Parameter((self.T,), name='para_gamma_b')
         self.para_actual_vel = cp.Parameter((2, 1), name='para_actual_vel')
-
         self.para_A_list = [ cp.Parameter((3, 3), name='para_A_'+str(t)) for t in range(self.T)]
         self.para_B_list = [ cp.Parameter((3, 2), name='para_B_'+str(t)) for t in range(self.T)]
         self.para_C_list = [ cp.Parameter((3, 1), name='para_C_'+str(t)) for t in range(self.T)]
@@ -276,17 +275,15 @@ class robot:
         constraints += [ cp.abs(self.indep_u) <= self.speed_bound]
         constraints += [ self.indep_s[:, 0:1] == self.para_s[:, 0:1] ]
         constraints += [ cp.abs(self.indep_u[:, 0:1] - self.para_actual_vel[:, 0:1]) <= self.acce_bound ]
-
+        # constraints += [ cp.abs(self.indep_u[:, 0:1] - self.para_actual_vel[:, 0:1]) <= 99]
         return constraints
     
 
     def generate_state_parameter_value(self, nom_s, nom_u, qs_ref_s, pu_ref_us, actual_vel):
-
         if actual_vel is None:
             state_value_list = [nom_s, qs_ref_s, pu_ref_us, nom_u[:, 0:1]]
         else:
             state_value_list = [nom_s, qs_ref_s, pu_ref_us, actual_vel]
-
         tensor_A_list = []
         tensor_B_list = []
         tensor_C_list = []

@@ -22,6 +22,7 @@ import torch
 import cvxpy as cp
 from neupan import configuration
 from neupan.robot import robot
+from neupan import configuration
 from neupan.configuration import to_device, value_to_tensor, np_to_tensor
 from cvxpylayers.torch import CvxpyLayer
 from neupan.util import time_it
@@ -87,6 +88,7 @@ class NRMP(torch.nn.Module):
         self.variable_definition()
         self.parameter_definition()
         self.problem_definition()
+        self.costs_dict = {}
 
         self.obstacle_points = None
         self.solver = kwargs.get("solver", "ECOS") 
@@ -167,7 +169,6 @@ class NRMP(torch.nn.Module):
         opt_solution_vel = solutions[1]
 
         nom_d = None if self.no_obs else solutions[2]
-
         # Update costs
         if configuration.log_cost:
             self.costs_dict.update(self.get_costs(
@@ -447,14 +448,16 @@ class NRMP(torch.nn.Module):
 
         return self.obstacle_points
 
-
     @property
     def costs(self):
         return self.costs_dict
 
 
+
+
     def get_costs(self, opt_solution_state, opt_solution_vel, nom_d, nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list, sorted_ids_list):
         costs_dict = {}
+
 
         with torch.no_grad():
             # state and control costs
@@ -465,8 +468,10 @@ class NRMP(torch.nn.Module):
             state_cost = torch.sum(diff_s**2)
             control_cost = torch.sum(diff_u**2)
 
+
             # proximal cost
             proximal_cost = 0.5 * self.bk * torch.sum((opt_solution_state - nom_s)**2)
+
 
             # C1 cost
             if not self.no_obs:
