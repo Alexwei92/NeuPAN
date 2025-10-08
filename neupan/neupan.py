@@ -73,7 +73,7 @@ class neupan(torch.nn.Module):
         # initialization
         self.cur_vel_array = np.zeros((2, self.T))
         self.robot = robot(receding, step_time, **robot_kwargs)
-
+        # print("robot_kwargs:", robot_kwargs)
         self.ipath = InitialPath(
             receding, step_time, ref_speed, self.robot, **ipath_kwargs
         )

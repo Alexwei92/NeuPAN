@@ -184,6 +184,7 @@ def gen_inequal_from_vertex(vertex: np.ndarray) -> tuple[np.ndarray, np.ndarray]
 
     G = np.zeros((num, 2))
     h = np.zeros((num, 1))
+    # n_norm = np.linalg.norm(n)
 
     for i in range(num):
         if i + 1 < num:
@@ -199,6 +200,13 @@ def gen_inequal_from_vertex(vertex: np.ndarray) -> tuple[np.ndarray, np.ndarray]
         b = -diff[0]
         c = a * pre_point[0] + b * pre_point[1]
 
+        # --- minimal addition: normalize (a, b, c) by ||(a,b)|| ---
+        norm_ab = np.hypot(a, b)  # sqrt(a^2 + b^2), stable
+        if norm_ab > 0:
+            a /= norm_ab
+            b /= norm_ab
+            c /= norm_ab
+            # print("Normalized (a, b, c) by ||(a,b)||")
         G[i, 0] = a
         G[i, 1] = b
         h[i, 0] = c

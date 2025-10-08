@@ -40,13 +40,21 @@ class robot:
         wheelbase: Optional[float] = None,
         length: Optional[float] = None,
         width: Optional[float] = None,
+        shape: Optional[str] = None,
         **kwargs,
     ):
         
         if kinematics is None:
             raise ValueError("kinematics is required")
 
-        self.shape = None
+        self.shape = shape
+        # mosaic special-case metadata
+        self.is_mosaic: bool = False
+        self.mosaic_translations: list[np.ndarray] = []  # list of (2,1) translations from base to each extra polygon
+        # use num_of_polygons to represent number of parts even for mosaic
+        
+        if self.shape == "mosaic":
+            self.is_mosaic = True
         
         self.is_multipolygon = is_vertices_multipolygon(vertices)
         if not self.is_multipolygon:
@@ -54,19 +62,49 @@ class robot:
             self.vertices = self.cal_vertices(vertices, length, width, wheelbase)
             self.G, self.h = gen_inequal_from_vertex(self.vertices)
         else:
-            self.vertices_list = self.cal_vertices_from_multipolygon(vertices, wheelbase)
-            self.num_of_polygons = len(vertices)
-            self.G_list = []
-            self.h_list = []
-            for vertices in self.vertices_list:
-                G, h = gen_inequal_from_vertex(vertices)
-                self.G_list.append(G)
-                self.h_list.append(h)
+            # multipolygon path
+            if self.is_mosaic:
+                # Special handling: use only the first polygon to build G/h, keep translations of others
+                self.is_mosaic = True
+                self.vertices_list = self.cal_vertices_from_multipolygon(vertices, wheelbase)
+                self.num_of_polygons = len(self.vertices_list)
+                # base polygon
+                self.vertices = self.vertices_list[0]
+                self.G, self.h = gen_inequal_from_vertex(self.vertices)
+                # compute translations from base to other parts (centroid differences)
+                base_center = np.mean(self.vertices, axis=1, keepdims=True)
+                self.mosaic_translations = []
+                self.mosaic_ratios = []
+                unit_square = self.vertices_list[0]
+                unit_square_side = np.linalg.norm(unit_square[:, 1] - unit_square[:, 0])
+                # print(f"mosaic unit square side: {unit_square_side}")
+                for i in range(1, self.num_of_polygons):
+                    vi = self.vertices_list[i]
+                    ci = np.mean(vi, axis=1, keepdims=True)
+                    self.mosaic_translations.append(to_device(torch.from_numpy(base_center - ci).float()))
+                    # calculate ratios based on the side 
+                    square_side = np.linalg.norm(vi[:, 1] - vi[:, 0])
+                    # print(f"mosaic part {i} side: {square_side}")
+                    self.mosaic_ratios.append(square_side / unit_square_side)
+                # treat downstream as single polygon
+                self.is_multipolygon = False
+                # keep num_of_polygons as the true count for reference
+            else:
+                # original multipolygon behavior
+                self.vertices_list = self.cal_vertices_from_multipolygon(vertices, wheelbase)
+                self.num_of_polygons = len(vertices)
+                self.G_list = []
+                self.h_list = []
+                for vertices in self.vertices_list:
+                    G, h = gen_inequal_from_vertex(vertices)
+                    self.G_list.append(G)
+                    self.h_list.append(h)
 
         self.T = receding
         self.dt = step_time
         self.L = wheelbase
-
+        # print(f"number of polygons: {self.num_of_polygons}")
+        # print(f"mosaic: {self.is_mosaic}, multipolygon: {self.is_multipolygon}")
         self.kinematics = kinematics
         self.max_speed = np.c_[max_speed] if isinstance(max_speed, list) else max_speed
         self.max_acce = np.c_[max_acce] if isinstance(max_acce, list) else max_acce
@@ -115,7 +153,6 @@ class robot:
         self.para_gamma_a = cp.Parameter((3, self.T+1), name='para_gamma_a') 
         self.para_gamma_b = cp.Parameter((self.T,), name='para_gamma_b')
         self.para_actual_vel = cp.Parameter((2, 1), name='para_actual_vel')
-
         self.para_A_list = [ cp.Parameter((3, 3), name='para_A_'+str(t)) for t in range(self.T)]
         self.para_B_list = [ cp.Parameter((3, 2), name='para_B_'+str(t)) for t in range(self.T)]
         self.para_C_list = [ cp.Parameter((3, 1), name='para_C_'+str(t)) for t in range(self.T)]
@@ -238,17 +275,14 @@ class robot:
         constraints += [ cp.abs(self.indep_u) <= self.speed_bound]
         constraints += [ self.indep_s[:, 0:1] == self.para_s[:, 0:1] ]
         constraints += [ cp.abs(self.indep_u[:, 0:1] - self.para_actual_vel[:, 0:1]) <= self.acce_bound ]
-
         return constraints
     
 
     def generate_state_parameter_value(self, nom_s, nom_u, qs_ref_s, pu_ref_us, actual_vel):
-
         if actual_vel is None:
             state_value_list = [nom_s, qs_ref_s, pu_ref_us, nom_u[:, 0:1]]
         else:
             state_value_list = [nom_s, qs_ref_s, pu_ref_us, actual_vel]
-
         tensor_A_list = []
         tensor_B_list = []
         tensor_C_list = []
