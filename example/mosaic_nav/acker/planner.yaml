@@ -47,13 +47,6 @@ adjust:
   d_max: 1.5
   d_min: 0.1
   bk: 1.0
-=======
-  p_u: 0.6
-  eta: 10.0
-  d_max: 1.0
-  d_min: 0.5
-  bk: 0.0
->>>>>>> 2c5c0765de559c2c4ec69e3176dc60828bb7a148
   # q_s: 0.5
   # p_u: 0.3
   # eta: 15.0
