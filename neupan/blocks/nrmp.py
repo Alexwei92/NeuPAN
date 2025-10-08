@@ -20,6 +20,7 @@ along with NeuPAN planner. If not, see <https://www.gnu.org/licenses/>.
 
 import torch
 import cvxpy as cp
+from neupan import configuration
 from neupan.robot import robot
 from neupan.configuration import to_device, value_to_tensor, np_to_tensor
 from cvxpylayers.torch import CvxpyLayer
@@ -40,7 +41,7 @@ class NRMP(torch.nn.Module):
         d_min: float = 0.1,
         q_s: float = 1.0,
         p_u: float = 1.0,
-        ro_obs: float = 400,
+        ro_obs: float = 500,
         bk: float = 0.1,
         **kwargs,
     ) -> None:
@@ -90,6 +91,8 @@ class NRMP(torch.nn.Module):
         self.obstacle_points = None
         self.solver = kwargs.get("solver", "ECOS") 
 
+        self.costs_dict = {}
+
     @time_it("- nrmp forward")
     def forward(
         self,
@@ -101,6 +104,7 @@ class NRMP(torch.nn.Module):
         lam_list: Optional[List[torch.Tensor]] = None,
         point_list: Optional[List[torch.Tensor]] = None,
         distance_list: Optional[List[torch.Tensor]] = None,
+        actual_vel: Optional[torch.Tensor] = None,
     ):
         """
         nom_s: nominal state, 3 * (T+1)
@@ -111,6 +115,7 @@ class NRMP(torch.nn.Module):
         lam_list: list of lam matrix, (max_num, 1)
         point_list: list of obstacle points, (max_num, 2)
         distance_list: list of distance, (max_num, )
+        actual_vel: actual velocity of the robot, 2 * 1
         """
 
         sorted_ids_list = None
@@ -154,7 +159,7 @@ class NRMP(torch.nn.Module):
                 ]  # current obstacle points considered in the optimization
 
         parameter_values = self.generate_parameter_value(
-            nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list, sorted_ids_list
+            nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list, sorted_ids_list, actual_vel
         )
 
         solutions = self.nrmp_layer(*parameter_values, solver_args={"solve_method": self.solver}) # see cvxpylayers and cvxpy for more details
@@ -163,16 +168,24 @@ class NRMP(torch.nn.Module):
 
         nom_d = None if self.no_obs else solutions[2]
 
+        # Update costs
+        if configuration.log_cost:
+            self.costs_dict.update(self.get_costs(
+                opt_solution_state, opt_solution_vel, nom_d,
+                nom_s, nom_u, ref_s, ref_us,
+                mu_list, lam_list, point_list, sorted_ids_list
+            ))
+            
         return opt_solution_state, opt_solution_vel, nom_d
 
     def generate_parameter_value(
-        self, nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list, sorted_ids_list
+        self, nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list, sorted_ids_list, actual_vel
     ):
         
         adjust_value_list = self.generate_adjust_parameter_value()
 
         state_value_list = self.robot.generate_state_parameter_value(
-            nom_s, nom_u, self.q_s * ref_s, self.p_u * ref_us
+            nom_s, nom_u, self.q_s * ref_s, self.p_u * ref_us, actual_vel
         )
 
         coefficient_value_list = self.generate_coefficient_parameter_value(
@@ -433,3 +446,58 @@ class NRMP(torch.nn.Module):
         """
 
         return self.obstacle_points
+
+
+    @property
+    def costs(self):
+        return self.costs_dict
+
+
+    def get_costs(self, opt_solution_state, opt_solution_vel, nom_d, nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, point_list, sorted_ids_list):
+        costs_dict = {}
+
+        with torch.no_grad():
+            # state and control costs
+            diff_u = self.p_u * (opt_solution_vel[0, :] - ref_us)
+            diff_s = self.q_s * (opt_solution_state - ref_s)
+
+            psi_cost = torch.sum(diff_s[2:3, :]**2).item()
+            state_cost = torch.sum(diff_s**2)
+            control_cost = torch.sum(diff_u**2)
+
+            # proximal cost
+            proximal_cost = 0.5 * self.bk * torch.sum((opt_solution_state - nom_s)**2)
+
+            # C1 cost
+            if not self.no_obs:
+                C1_cost = -self.eta * torch.sum(nom_d)
+            else:
+                C1_cost = torch.tensor(0.0)
+
+            # I cost
+            if not self.no_obs:
+                coefficient_value_list = self.generate_coefficient_parameter_value(
+                    mu_list, lam_list, point_list, sorted_ids_list
+                )
+                para_gamma_c = coefficient_value_list[:self.T]
+                para_zeta_a = coefficient_value_list[self.T:]
+
+                nom_t = nom_s[0:2, 1:]
+                I_list = []
+                for t in range(self.T):
+                    I_dpp = para_gamma_c[t] @ nom_t[:, t:t+1] - para_zeta_a[t] - nom_d[0, t]
+                    I_list.append(I_dpp)                   
+                I_array = torch.stack(I_list, dim=0)
+                I_cost = 0.5 * self.ro_obs * torch.sum(torch.relu(-I_array)**2)
+            else:
+                I_cost = torch.tensor(0.0)
+
+        total_cost = state_cost + control_cost + proximal_cost + C1_cost + I_cost
+        costs_dict['total'] = total_cost.item()
+        costs_dict['s'] = state_cost.item()
+        costs_dict['u'] = control_cost.item() 
+        costs_dict['prox'] = proximal_cost.item()
+        costs_dict['C1'] = C1_cost.item()
+        costs_dict['I'] = I_cost.item()
+
+        return costs_dict
