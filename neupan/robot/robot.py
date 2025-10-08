@@ -146,13 +146,13 @@ class robot:
             - para_gamma_b: p*reference speed array, T
             - para_s: nominal state, 3 * (T+1)
             - para_A_list, para_B_list, para_C_list: for state transition model
+            - para_actual_vel: actual velocity of the robot, 2 * 1
         '''
 
         self.para_s = cp.Parameter((3, self.T+1), name='para_state') 
         self.para_gamma_a = cp.Parameter((3, self.T+1), name='para_gamma_a') 
         self.para_gamma_b = cp.Parameter((self.T,), name='para_gamma_b')
         self.para_actual_vel = cp.Parameter((2, 1), name='para_actual_vel')
-        
         self.para_A_list = [ cp.Parameter((3, 3), name='para_A_'+str(t)) for t in range(self.T)]
         self.para_B_list = [ cp.Parameter((3, 2), name='para_B_'+str(t)) for t in range(self.T)]
         self.para_C_list = [ cp.Parameter((3, 1), name='para_C_'+str(t)) for t in range(self.T)]
@@ -274,8 +274,8 @@ class robot:
         constraints += [ cp.abs(self.indep_u[:, 1:] - self.indep_u[:, :-1] ) <= self.acce_bound ] 
         constraints += [ cp.abs(self.indep_u) <= self.speed_bound]
         constraints += [ self.indep_s[:, 0:1] == self.para_s[:, 0:1] ]
-        # constraints += [ cp.abs(self.indep_u[:, 0:1] - self.para_actual_vel[:, 0:1]) <= self.acce_bound ]
-        constraints += [ cp.abs(self.indep_u[:, 0:1] - self.para_actual_vel[:, 0:1]) <= 999 ]
+        constraints += [ cp.abs(self.indep_u[:, 0:1] - self.para_actual_vel[:, 0:1]) <= self.acce_bound ]
+        # constraints += [ cp.abs(self.indep_u[:, 0:1] - self.para_actual_vel[:, 0:1]) <= 99]
         return constraints
     
 

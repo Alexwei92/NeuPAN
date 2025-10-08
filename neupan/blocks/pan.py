@@ -22,6 +22,7 @@ import torch
 from neupan.blocks import NRMP, DUNE
 from math import inf
 from typing import Optional
+from neupan import configuration
 from neupan.configuration import to_device, tensor_to_np
 from neupan.util import downsample_decimation, time_it
 from neupan import configuration
@@ -73,7 +74,7 @@ class PAN(torch.nn.Module):
             d_min=adjust_kwargs.get("d_min", 0.1),
             q_s=adjust_kwargs.get("q_s", 1.0),
             p_u=adjust_kwargs.get("p_u", 1.0),
-            ro_obs=adjust_kwargs.get("ro_obs", 400),
+            ro_obs=adjust_kwargs.get("ro_obs", 500),
             bk=adjust_kwargs.get("bk", 0.1),
             solver=adjust_kwargs.get("solver", "ECOS"),
         )
@@ -135,6 +136,10 @@ class PAN(torch.nn.Module):
             - obs_points: (2, number of obs points), point cloud, global coordinate
             - velocities: (2, number of obs points), velocity of each obs point
             - actual_vel: (2, 1), actual velocity of the robot
+<<<<<<< HEAD
+
+=======
+>>>>>>> workable_mosaic
         output:
             - opt_vel: optimal velocity tensor; (2, receding)
             - opt_state: optimal state array  (3, receding+1)
@@ -274,9 +279,9 @@ class PAN(torch.nn.Module):
             if self.stop_criteria(nom_s, nom_u, mu_list, lam_list):
                 break
 
-            if configuration.log_cost:
-                print(f"costs: {self.nrmp_layer.costs}")
-                print("-" * 50)
+        if configuration.log_cost:
+            print(f"costs: {self.nrmp_layer.costs}")
+            print("-" * 50)
 
         return nom_s, nom_u, nom_distance
 

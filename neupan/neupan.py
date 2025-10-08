@@ -133,10 +133,6 @@ class neupan(torch.nn.Module):
             *nom_input_tensor, obstacle_points_tensor, point_velocities_tensor, actual_vel_tensor
         )
 
-        opt_state_tensor, opt_vel_tensor, opt_distance_tensor = self.pan(
-            *nom_input_tensor, obstacle_points_tensor, point_velocities_tensor
-        )
-
         opt_state_np, opt_vel_np = tensor_to_np(opt_state_tensor), tensor_to_np(
             opt_vel_tensor
         )
