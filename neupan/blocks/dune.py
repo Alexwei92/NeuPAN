@@ -51,55 +51,104 @@ class DUNE(torch.nn.Module):
 
         
     # @time_it('- dune forward')
-    def forward(self, point_flow: list[torch.Tensor], R_list: list[torch.Tensor], obs_points_list: list[torch.Tensor]=[]) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
+    # def forward(self, point_flow: list[torch.Tensor], R_list: list[torch.Tensor], obs_points_list: list[torch.Tensor]=[]) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
 
-        '''
-        map point flow to the latent distance features: lam, mu
+    #     '''
+    #     map point flow to the latent distance features: lam, mu
 
-        Args:
-            point_flow: point flow under the robot coordinate, list of (state_dim, num_points); list length: T+1
-            R_list: list of Rotation matrix, list of (2, 2), used to generate the lam from mu; list length: T
-            obstacle_points: tensor of shape (2, num_points), global coordinate; 
+    #     Args:
+    #         point_flow: point flow under the robot coordinate, list of (state_dim, num_points); list length: T+1
+    #         R_list: list of Rotation matrix, list of (2, 2), used to generate the lam from mu; list length: T
+    #         obstacle_points: tensor of shape (2, num_points), global coordinate; 
 
-        Returns: 
-            lam_list: list of lam tensor, each element is a tensor of shape (state_dim, num_points); list length: T+1
-            mu_list: list of mu tensor, each element is a tensor of shape (edge_number, num_points); list length: T+1
-            sort_point_list: list of point tensor, each element is a tensor of shape (state_dim, num_points); list length: T+1; 
-        '''
+    #     Returns: 
+    #         lam_list: list of lam tensor, each element is a tensor of shape (state_dim, num_points); list length: T+1
+    #         mu_list: list of mu tensor, each element is a tensor of shape (edge_number, num_points); list length: T+1
+    #         sort_point_list: list of point tensor, each element is a tensor of shape (state_dim, num_points); list length: T+1; 
+    #     '''
 
-        mu_list, lam_list, sort_point_list, distance_list = [], [], [], []
-        self.obstacle_points = obs_points_list[0] # current obstacle points considered in the dune at time 0
+    #     mu_list, lam_list, sort_point_list, distance_list = [], [], [], []
+    #     self.obstacle_points = obs_points_list[0] # current obstacle points considered in the dune at time 0
 
-        total_points = torch.hstack(point_flow)
+    #     total_points = torch.hstack(point_flow)
         
-        # map the point flow to the latent distance features mu
-        with torch.no_grad():
-            total_mu = self.model(total_points.T).T
+    #     # map the point flow to the latent distance features mu
+    #     with torch.no_grad():
+    #         total_mu = self.model(total_points.T).T
         
-        for index in range(self.T+1):
-            num_points = point_flow[index].shape[1]
-            mu = total_mu[:, index*num_points : (index+1)*num_points]
-            R = R_list[index]
-            p0 = point_flow[index]
-            lam = (- R @ self.G.T @ mu)
+    #     for index in range(self.T+1):
+    #         num_points = point_flow[index].shape[1]
+    #         mu = total_mu[:, index*num_points : (index+1)*num_points]
+    #         R = R_list[index]
+    #         p0 = point_flow[index]
+    #         lam = (- R @ self.G.T @ mu)
 
-            if mu.ndim == 1:
-                mu = mu.unsqueeze(1)
-                lam = lam.unsqueeze(1)
+    #         if mu.ndim == 1:
+    #             mu = mu.unsqueeze(1)
+    #             lam = lam.unsqueeze(1)
 
-            distance = self.cal_objective_distance(mu, p0)
+    #         distance = self.cal_objective_distance(mu, p0)
 
-            if index == 0: 
-                self.min_distance = torch.min(distance) 
+    #         if index == 0: 
+    #             self.min_distance = torch.min(distance) 
             
-            sort_indices = torch.argsort(distance)
+    #         sort_indices = torch.argsort(distance)
 
-            mu_list.append(mu[:, sort_indices])
-            lam_list.append(lam[:, sort_indices])
-            sort_point_list.append(obs_points_list[index][:, sort_indices])
-            distance_list.append(distance[sort_indices])
+    #         mu_list.append(mu[:, sort_indices])
+    #         lam_list.append(lam[:, sort_indices])
+    #         sort_point_list.append(obs_points_list[index][:, sort_indices])
+    #         distance_list.append(distance[sort_indices])
 
-        return mu_list, lam_list, sort_point_list, distance_list
+    #     return mu_list, lam_list, sort_point_list, distance_list
+    def forward(
+            self,
+            point_flow: list[torch.Tensor],
+            R_list: list[torch.Tensor],
+            obs_points_list: list[torch.Tensor] = [],
+        ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
+            """
+            point_flow: list of (state_dim, num_points)
+            R_list:     list of (2,2), MUST be same length as point_flow
+            obs_points_list: list of (2, num_points), same length as point_flow
+            """
+            L = len(point_flow)
+            assert len(R_list) == L, "R_list must match point_flow length"
+            assert len(obs_points_list) == L, "obs_points_list must match point_flow length"
+
+            mu_list, lam_list, sort_point_list, distance_list = [], [], [], []
+            self.obstacle_points = obs_points_list[0]  # time 0 reference (unchanged behavior)
+
+            # Single model call for all slices
+            total_points = torch.hstack(point_flow)  # (state_dim, sum_i n_i)
+            with torch.no_grad():
+                total_mu = self.model(total_points.T).T  # (edge_num, sum_i n_i)
+
+            # Slice back per-slice using a running pointer (handles variable n_i)
+            ptr = 0
+            for index in range(L):
+                n_i = point_flow[index].shape[1]
+                mu = total_mu[:, ptr:ptr + n_i]
+                ptr += n_i
+
+                R = R_list[index]
+                p0 = point_flow[index]
+
+                lam = (- R @ self.G.T @ mu)
+                if mu.ndim == 1:
+                    mu = mu.unsqueeze(1)
+                    lam = lam.unsqueeze(1)
+
+                distance = self.cal_objective_distance(mu, p0)
+                if index == 0:
+                    self.min_distance = torch.min(distance)
+
+                sort_indices = torch.argsort(distance)
+                mu_list.append(mu[:, sort_indices])
+                lam_list.append(lam[:, sort_indices])
+                sort_point_list.append(obs_points_list[index][:, sort_indices])
+                distance_list.append(distance[sort_indices])
+
+            return mu_list, lam_list, sort_point_list, distance_list
 
 
     def cal_objective_distance(self, mu: torch.Tensor, p0: torch.Tensor) -> torch.Tensor:

@@ -41,6 +41,7 @@ class robot:
         length: Optional[float] = None,
         width: Optional[float] = None,
         shape: Optional[str] = None,
+        base_square: list[list[float]] = None, 
         **kwargs,
     ):
         
@@ -55,6 +56,9 @@ class robot:
         
         if self.shape == "mosaic":
             self.is_mosaic = True
+            if base_square is None:
+                raise ValueError("base_square is required for mosaic shape")
+            self.base_square_vertices = np.array(base_square).T
         
         self.is_multipolygon = is_vertices_multipolygon(vertices)
         if not self.is_multipolygon:
@@ -69,16 +73,16 @@ class robot:
                 self.vertices_list = self.cal_vertices_from_multipolygon(vertices, wheelbase)
                 self.num_of_polygons = len(self.vertices_list)
                 # base polygon
-                self.vertices = self.vertices_list[0]
-                self.G, self.h = gen_inequal_from_vertex(self.vertices)
+                # self.vertices = self.base_square[0]
+                self.G, self.h = gen_inequal_from_vertex(self.base_square_vertices)
                 # compute translations from base to other parts (centroid differences)
-                base_center = np.mean(self.vertices, axis=1, keepdims=True)
+                base_center = np.mean(self.base_square_vertices, axis=1, keepdims=True)
                 self.mosaic_translations = []
                 self.mosaic_ratios = []
-                unit_square = self.vertices_list[0]
+                unit_square = self.base_square_vertices
                 unit_square_side = np.linalg.norm(unit_square[:, 1] - unit_square[:, 0])
                 # print(f"mosaic unit square side: {unit_square_side}")
-                for i in range(1, self.num_of_polygons):
+                for i in range(self.num_of_polygons):
                     vi = self.vertices_list[i]
                     ci = np.mean(vi, axis=1, keepdims=True)
                     self.mosaic_translations.append(to_device(torch.from_numpy(base_center - ci).float()))
@@ -86,6 +90,7 @@ class robot:
                     square_side = np.linalg.norm(vi[:, 1] - vi[:, 0])
                     # print(f"mosaic part {i} side: {square_side}")
                     self.mosaic_ratios.append(square_side / unit_square_side)
+                # print(f"mosaic translations:{self.mosaic_translations}, mosaic ratios: {self.mosaic_ratios}")
                 # treat downstream as single polygon
                 self.is_multipolygon = False
                 # keep num_of_polygons as the true count for reference

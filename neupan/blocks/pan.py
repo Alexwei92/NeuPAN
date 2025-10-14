@@ -27,6 +27,88 @@ from neupan.configuration import to_device, tensor_to_np
 from neupan.util import downsample_decimation, time_it
 from neupan import configuration
 
+def _stack_nums_or_tensors(seq, *, dtype, device, name, last_dim=None):
+    """
+    Accepts: tensor, list/tuple of numbers, or list/tuple of tensors (same shape).
+    Returns: tensor on (device,dtype). If last_dim is given, validate/reshape.
+    """
+    # already a tensor
+    if isinstance(seq, torch.Tensor):
+        t = seq.to(device=device, dtype=dtype)
+    # list/tuple
+    elif isinstance(seq, (list, tuple)):
+        if len(seq) > 0 and isinstance(seq[0], torch.Tensor):
+            t = torch.stack([x.to(device=device, dtype=dtype) for x in seq], dim=0)
+        else:
+            t = torch.as_tensor(seq, dtype=dtype, device=device)
+    else:
+        # single number
+        t = torch.as_tensor(seq, dtype=dtype, device=device)
+
+    # optional shape check/reshape for translations
+    if last_dim is not None:
+        if t.dim() == 1:
+            if last_dim != 1:
+                if t.numel() % last_dim != 0:
+                    raise ValueError(f"{name} has numel {t.numel()} not divisible by {last_dim}.")
+                t = t.view(-1, last_dim)
+        elif t.size(-1) != last_dim:
+            raise ValueError(f"{name} must have last dim={last_dim}, got {tuple(t.shape)}")
+    return t
+
+# --- robust normalization for mosaic params (handles lists of tensors like (2,1)) ---
+def _norm_ratios(seq, *, dtype, device):
+    if isinstance(seq, torch.Tensor):
+        r = seq.to(device=device, dtype=dtype)
+    elif isinstance(seq, (list, tuple)):
+        if len(seq) > 0 and isinstance(seq[0], torch.Tensor):
+            r = torch.stack([x.to(device=device, dtype=dtype).reshape(-1) for x in seq], dim=0)
+        else:
+            r = torch.as_tensor(seq, dtype=dtype, device=device)
+    else:
+        r = torch.as_tensor(seq, dtype=dtype, device=device)
+    return r.flatten()  # (P,)
+
+def _norm_translations(seq, *, dtype, device):
+    """
+    Accepts e.g.:
+      - [[dx, dy], ...]
+      - [tensor([dx, dy]), ...]
+      - [tensor([[dx],[dy]]), ...]  # (2,1)
+      - tensor of shape (P,2), (2,P), (P,2,1)
+    Returns: (P,2)
+    """
+    if isinstance(seq, torch.Tensor):
+        t = seq.to(device=device, dtype=dtype)
+    elif isinstance(seq, (list, tuple)):
+        if len(seq) > 0 and isinstance(seq[0], torch.Tensor):
+            # flatten each element to shape (2,)
+            t = torch.stack([x.to(device=device, dtype=dtype).reshape(-1) for x in seq], dim=0)
+        else:
+            t = torch.as_tensor(seq, dtype=dtype, device=device)
+    else:
+        t = torch.as_tensor(seq, dtype=dtype, device=device)
+
+    # squeeze trailing singletons: (P,2,1)->(P,2), (P,2,1,1)->(P,2), etc.
+    while t.dim() > 1 and t.size(-1) == 1:
+        t = t.squeeze(-1)
+
+    # coerce to (P,2)
+    if t.dim() == 1:
+        if t.numel() % 2 != 0:
+            raise ValueError(f"mosaic_translations has {t.numel()} elements; cannot reshape to pairs of 2.")
+        t = t.view(-1, 2)
+    elif t.dim() == 2:
+        # handle (2,P) -> (P,2)
+        if t.shape[0] == 2 and t.shape[1] != 2:
+            t = t.t()
+        if t.shape[1] != 2:
+            raise ValueError(f"mosaic_translations must end with 2 coords; got {tuple(t.shape)}")
+    else:
+        raise ValueError(f"mosaic_translations unexpected ndim={t.dim()} after squeeze: shape={tuple(t.shape)}")
+
+    return t  # (P,2)
+
 class PAN(torch.nn.Module):
     """
     Args:
@@ -148,108 +230,129 @@ class PAN(torch.nn.Module):
             if obs_points is not None and not self.no_obs:
                 
                 if self.is_mosaic:
-                    mu_list_mosaic, lam_list_mosaic, sort_point_list_mosaic, distance_list_mosaic = [],[],[],[]
-                    # print(self.robot.mosaic_ratios, self.robot.mosaic_translations)
-                    # unit case
-                    point_flow_list, R_list, obs_points_list = self.generate_point_flow(
+                    # --- broadcasted prep across polys ---
+                    # ratios = torch.as_tensor(self.robot.mosaic_ratios, dtype=nom_s.dtype, device=nom_s.device)             # (P,)
+                    # translations = torch.as_tensor(self.robot.mosaic_translations, dtype=nom_s.dtype, device=nom_s.device) # (P,2)
+                    # --- robust normalization for mosaic params ---
+
+
+                    # Use the helper:
+                    # ratios = _stack_nums_or_tensors(
+                    #     self.robot.mosaic_ratios, dtype=nom_s.dtype, device=nom_s.device, name="mosaic_ratios"
+                    # ).flatten()                              # (P,)
+
+                    # translations = _stack_nums_or_tensors(
+                    #     self.robot.mosaic_translations, dtype=nom_s.dtype, device=nom_s.device,
+                    #     name="mosaic_translations", last_dim=2
+                    # )                                        # (P,2)
+                    # Normalize params once
+                    ratios = _norm_ratios(self.robot.mosaic_ratios, dtype=nom_s.dtype, device=nom_s.device)  # (P,)
+                    translations = _norm_translations(self.robot.mosaic_translations, dtype=nom_s.dtype, device=nom_s.device)  # (P,2)
+                    
+
+                    P = ratios.numel()
+                    T1 = nom_s.shape[1]  # receding+1
+                    if translations.size(0) != P:
+                        raise ValueError(f"mosaic_translations first dim {translations.size(0)} != P {P}")
+
+
+                    # translate then scale nom_s per poly
+                    nom_s_b = nom_s.unsqueeze(0).expand(P, -1, -1).clone()       # (P,3,T1)
+                    nom_s_b[:, :2, :] += translations.view(P, 2, 1)              # add per-poly translation
+                    scaled_nom_s_b = nom_s_b.clone()
+                    scaled_nom_s_b[:, :2, :] /= ratios.view(P, 1, 1)             # unit-space per poly
+
+                    # scale obstacles + velocities per poly (stay in global frame, only scale xy)
+                    if obs_points is not None:
+                        scaled_obs_b = obs_points.unsqueeze(0).expand(P, -1, -1).clone()   # (P,2,N)
+                        scaled_obs_b[:, :2, :] /= ratios.view(P, 1, 1)
+                    else:
+                        scaled_obs_b = None
+
+                    if point_velocities is not None:
+                        point_vel_b = point_velocities.unsqueeze(0).expand(P, -1, -1).clone()  # (P,2,N)
+                        point_vel_b[:, :2, :] /= ratios.view(P, 1, 1)
+                    else:
+                        point_vel_b = None
+
+                    # Keep a base call to preserve R_list (yaw-only) and dune_points behavior
+                    _, R_base_list, obs_points_base_list = self.generate_point_flow(
                         nom_s, obs_points, point_velocities
                     )
-                    mu_list, lam_list, sort_point_list, distance_list = self.forward_dune(
-                        point_flow_list, R_list, obs_points_list) 
-                    # print(f"mu_list: {mu_list},\n lam_list: {lam_list}")
-                    # print(f"sort_point_list: {sort_point_list},\n distance_list: {distance_list}")
-                    mu_list_mosaic.append(mu_list)
-                    lam_list_mosaic.append(lam_list)
-                    sort_point_list_mosaic.append(sort_point_list)
-                    distance_list_mosaic.append(distance_list)
-                    # print(f"mu_list:{mu_list}")
-                    # print(f"lam_list:{lam_list}")
-                    for (ratio, trans) in zip(self.robot.mosaic_ratios, self.robot.mosaic_translations):
-                        # Debug prints about dims and devices
-                        # try:
-                        #     print(f"[mosaic] ratio: {ratio}, trans.shape: {tuple(trans.shape)}, trans.device: {trans.device}")
-                        #     print(f"[mosaic] nom_s shape: {tuple(nom_s.shape)}, dtype: {nom_s.dtype}, device: {nom_s.device}")
-                        # except Exception:
-                        #     pass
-                        # 1. translate the nom_s based on the translation (vector of other square center to base center)
-                        nom_s_trans = nom_s.clone()
-                        nom_s_trans[:2, :] += trans
-                        # try:
-                        #     print(f"[mosaic] nom_s_trans shape: {trans}")
-                        # except Exception:
-                        #     pass
-                        # 2. scale only the first two rows (x, y)
-                        # scaled_nom_s = torch.cat((nom_s_trans[:2, :] / ratio, nom_s_trans[2:, :]), dim=0)
-                        # print(f"**********ratio: {ratio}**********")
-                        # print(f"nom_s_trans: {nom_s_trans}")
-                        scaled_nom_s = nom_s_trans.clone()
-                        scaled_nom_s[:2, :] /= ratio
-                        # print(f"scaled_nom_s: {scaled_nom_s}")
-                        # try:
-                        #     print(f"[mosaic] scaled_nom_s shape: {tuple(scaled_nom_s.shape)}")
-                        # except Exception:
-                        #     pass
-                        # Scale obstacle points consistently in x, y
-                        scaled_obs = obs_points.clone()
-                        # print(f"scaled_obs: {scaled_obs}")
-                        scaled_obs[:2, :] /= ratio
-                        # print(f"scaled_obs: {scaled_obs}")
 
-                        # try:
-                        #     print(f"[mosaic] scaled_obs shape: {tuple(scaled_obs.shape)}")
-                        # except Exception:
-                        #     pass
-                        point_velocities_scaled = point_velocities/ratio if point_velocities is not None else None
-                        # try:
-                        #     if point_velocities_scaled is not None:
-                        #         print(f"[mosaic] point_velocities_scaled shape: {tuple(point_velocities_scaled.shape)}")
-                        # except Exception:
-                        #     pass
-                        # 3. generate the point flow based on the scaled nom_s and scaled obs points
-                        point_flow_scaled, R_list, obs_points_scaled = self.generate_point_flow(
-                            scaled_nom_s, scaled_obs, point_velocities_scaled
+                    # --- prepare all per-poly lists (lightweight loop, heavy NN will be single call) ---
+                    per_poly_point_flow = []
+                    per_poly_obs_points = []
+                    for p in range(P):
+                        pf_p, _, obs_p = self.generate_point_flow(
+                            scaled_nom_s_b[p],
+                            scaled_obs_b[p] if scaled_obs_b is not None else None,
+                            point_vel_b[p]   if point_vel_b   is not None else None,
                         )
-                        # 4. forward dune based on the scaled point flow and obs points
-                        mu_list_scaled, lam_list_scaled, sort_point_list_scaled, distance_list_scaled = self.forward_dune(
-                            point_flow_scaled, R_list, obs_points_scaled)
-                        distance_scaled_from_unit = [d * ratio for d in distance_list_scaled]
-                        sort_point_scaled_from_unit = [p * ratio for p in sort_point_list_scaled]
-                        # print(f"mu_list_scaled:{mu_list_scaled}")
-                        # print(f"lam_list_scaled:{lam_list_scaled}")
-                        mu_list_mosaic.append(mu_list_scaled)
-                        lam_list_mosaic.append(lam_list_scaled)
-                        # Correct: append scaled points to point list, scaled distances to distance list
-                        sort_point_list_mosaic.append(sort_point_scaled_from_unit)
-                        distance_list_mosaic.append(distance_scaled_from_unit)
-                        # print(f"mu_scaled_from_unit:{mu_list_scaled[0]}")
-                        # print(f"lam_scaled_from_unit:{lam_list_scaled[0]}")
-                        # print(f"distance_scaled_from_unit:{distance_list_mosaic[0]}")
-                        # print(f"sort_point_scaled_from_unit:{sort_point_list_mosaic[0]}")
-                        # print(f"")
-                    # Keep poly-major structure: [poly][time] tensors
+                        per_poly_point_flow.append(pf_p)  # list length T1
+                        per_poly_obs_points.append(obs_p) # list length T1
+
+                    # flatten across polys: length = P * T1
+                    point_flow_big   = [pf for p in range(P) for pf in per_poly_point_flow[p]]
+                    obs_points_big   = [op for p in range(P) for op in per_poly_obs_points[p]]
+
+                    # R_list must be same length as point_flow_big; R is yaw-only (independent of scale/translation)
+                    R_list_big = []
+                    for _p in range(P):
+                        if len(R_base_list) == T1:
+                            R_list_big.extend(R_base_list)
+                        elif len(R_base_list) == T1 - 1:
+                            # pad last rotation for the final time step if your generate_point_flow returns T entries
+                            R_list_big.extend(R_base_list + [R_base_list[-1]])
+                        else:
+                            raise ValueError(f"R_list length {len(R_base_list)} unexpected for T1={T1}")
+
+                    # --- SINGLE dune call over all polys and times ---
+                    mu_big, lam_big, sort_pts_big, dist_big = self.dune_layer(
+                        point_flow_big, R_list_big, obs_points_big
+                    )
+
+                    # --- regroup back to poly-major and rescale geometric outputs ---
+                    items_per_poly = T1
+                    mu_list_mosaic, lam_list_mosaic = [], []
+                    sort_point_list_mosaic, distance_list_mosaic = [], []
+
+                    for p in range(P):
+                        s = p * items_per_poly
+                        e = (p + 1) * items_per_poly
+
+                        mu_p  = mu_big[s:e]
+                        lam_p = lam_big[s:e]
+                        # rescale back from unit-space
+                        r = ratios[p]
+                        sort_p = [sp * r for sp in sort_pts_big[s:e]]
+                        dist_p = [d  * r for d  in dist_big[s:e]]
+
+                        mu_list_mosaic.append(mu_p)
+                        lam_list_mosaic.append(lam_p)
+                        sort_point_list_mosaic.append(sort_p)
+                        distance_list_mosaic.append(dist_p)
+
+                    # Keep poly-major structure
                     mu_list = mu_list_mosaic
                     lam_list = lam_list_mosaic
                     sort_point_list = sort_point_list_mosaic
                     distance_list = distance_list_mosaic
-                    
-                    min_dist_values = []
-                    # if self.num_of_polygons > 1:
-                    for poly_dist_list in distance_list:
-                        for time_dist_list in poly_dist_list:
-                            if isinstance(time_dist_list, torch.Tensor):
-                                if time_dist_list.numel() > 0:
-                                    min_dist_values.extend(time_dist_list.flatten().tolist())
-                            elif isinstance(time_dist_list, list):
-                                for d in time_dist_list:
-                                    if d.numel() > 0:
-                                        min_dist_values.extend(d.flatten().tolist())
 
-                    if min_dist_values:
-                        self.min_distance = min(min_dist_values)
-                    
-                    # Store the first layer's obstacle points (at time 0) for dune_points property
-                    if obs_points_list and len(obs_points_list) > 0:
-                        self._points = obs_points_list[0]
+                    # min distance (original units)
+                    mins = []
+                    for poly in distance_list_mosaic:
+                        for d in poly:
+                            if isinstance(d, torch.Tensor) and d.numel() > 0:
+                                mins.append(torch.min(d))
+                    if mins:
+                        self.min_distance = float(torch.stack(mins).min().item())
+
+                    # dune_points property behavior unchanged: store base obstacle points at time 0 (global)
+                    if obs_points_base_list and len(obs_points_base_list) > 0:
+                        self._points = obs_points_base_list[0]
+
+
                 else:
                     point_flow_list, R_list, obs_points_list = self.generate_point_flow(
                     nom_s, obs_points, point_velocities
@@ -260,15 +363,6 @@ class PAN(torch.nn.Module):
             else:
                 mu_list, lam_list, sort_point_list, distance_list = [], [], [], []
                 
-            
-            # print the shape of all the inputs for nrmp_layer
-            # print(f"nom_s: {nom_s.shape}, nom_u: {nom_u.shape}")
-            # if mu_list:
-            #     if self.is_multipolygon or self.is_mosaic:
-            #         for i in range(self.num_of_polygons):
-            #             print(f"mu_list[{i}]: {[mu for mu in mu_list[i]]},\n lam_list[{i}]: {[lam for lam in lam_list[i]]}")
-            #             print(f"sort_point_list[{i}]: {[sort_point for sort_point in sort_point_list[i]]},\n distance_list[{i}]: {[distance for distance in distance_list[i]]}")
-
             nom_s, nom_u, nom_distance = self.nrmp_layer(
                 nom_s, nom_u, ref_s, ref_us, mu_list, lam_list, sort_point_list, distance_list, actual_vel
             )
