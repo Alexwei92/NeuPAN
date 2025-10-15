@@ -149,6 +149,7 @@ class neupan(torch.nn.Module):
             state[:, np.newaxis] for state in nom_input_np[2].T
         ]
         self.info["opt_state_list"] = [state[:, np.newaxis] for state in opt_state_np.T]
+        print(f"NeuPAN minimum distance: {self.min_distance:.3f} m")
 
         if self.check_stop():
             self.info["stop"] = True
