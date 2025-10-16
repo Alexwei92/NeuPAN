@@ -90,7 +90,7 @@ class Timer:
             # print(f"nom_s_trans: {nom_s_trans}")
             scaled_nom_s = nom_s_trans.clone()
             # handle variable trailing dimensions (time, batch, etc.)
-            # scaled_nom_s[:2, ...] /= ratio
+            scaled_nom_s[:2, ...] /= ratio
             # print(f"scaled_nom_s: {scaled_nom_s}")
             # try:
             #     print(f"[mosaic] scaled_nom_s shape: {tuple(scaled_nom_s.shape)}")
@@ -169,6 +169,7 @@ def main(env_path, planner_path):
     print(neupan_planner.robot.G)
     print(neupan_planner.robot.h)
     nom_s = torch.stack([np_to_tensor(robot_state[:3]) for _ in range(pan.T+1)], dim=1)
+    # points in the map frame
     obs_points = np_to_tensor(points) if points is not None else None
     print(f"Number of obs points: {obs_points.shape[1]}, type of the obs points: {type(obs_points[:,0])}")
     print(f"Number of obs points: {nom_s.shape[1]}, type of the nom_s: {type(nom_s)}")
