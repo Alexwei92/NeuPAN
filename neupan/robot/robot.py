@@ -81,7 +81,8 @@ class robot:
                 for i in range(1, self.num_of_polygons):
                     vi = self.vertices_list[i]
                     ci = np.mean(vi, axis=1, keepdims=True)
-                    self.mosaic_translations.append(to_device(torch.from_numpy(base_center - ci).float()))
+                    self.mosaic_translations.append(to_device(torch.from_numpy(ci - base_center).float()))
+                    # self.mosaic_translations.append(to_device(torch.from_numpy(base_center-ci).float()))
                     # calculate ratios based on the side 
                     square_side = np.linalg.norm(vi[:, 1] - vi[:, 0])
                     # print(f"mosaic part {i} side: {square_side}")
