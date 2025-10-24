@@ -546,7 +546,7 @@ def main(env_path, planner_path):
         import traceback
         print(f"Failed to evaluate mosaic polygons: {e}")
         traceback.print_exc()
-    
+    env.render()
     print("\nEvaluation complete for all mosaic polygons.")
     input("Press Enter to close...")
 
