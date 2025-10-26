@@ -27,35 +27,6 @@ from neupan.configuration import to_device, tensor_to_np
 from neupan.util import downsample_decimation, time_it
 from neupan import configuration
 
-def _stack_nums_or_tensors(seq, *, dtype, device, name, last_dim=None):
-    """
-    Accepts: tensor, list/tuple of numbers, or list/tuple of tensors (same shape).
-    Returns: tensor on (device,dtype). If last_dim is given, validate/reshape.
-    """
-    # already a tensor
-    if isinstance(seq, torch.Tensor):
-        t = seq.to(device=device, dtype=dtype)
-    # list/tuple
-    elif isinstance(seq, (list, tuple)):
-        if len(seq) > 0 and isinstance(seq[0], torch.Tensor):
-            t = torch.stack([x.to(device=device, dtype=dtype) for x in seq], dim=0)
-        else:
-            t = torch.as_tensor(seq, dtype=dtype, device=device)
-    else:
-        # single number
-        t = torch.as_tensor(seq, dtype=dtype, device=device)
-
-    # optional shape check/reshape for translations
-    if last_dim is not None:
-        if t.dim() == 1:
-            if last_dim != 1:
-                if t.numel() % last_dim != 0:
-                    raise ValueError(f"{name} has numel {t.numel()} not divisible by {last_dim}.")
-                t = t.view(-1, last_dim)
-        elif t.size(-1) != last_dim:
-            raise ValueError(f"{name} must have last dim={last_dim}, got {tuple(t.shape)}")
-    return t
-
 # --- robust normalization for mosaic params (handles lists of tensors like (2,1)) ---
 def _norm_ratios(seq, *, dtype, device):
     if isinstance(seq, torch.Tensor):
@@ -206,6 +177,7 @@ class PAN(torch.nn.Module):
 
         self.printed = False
 
+    @time_it("PAN forward")
     def forward(
         self, nom_s: torch.Tensor, nom_u: torch.Tensor, ref_s: torch.Tensor, ref_us: torch.Tensor, obs_points: torch.Tensor = None, point_velocities: torch.Tensor = None, actual_vel: torch.Tensor = None
     ):
@@ -224,6 +196,10 @@ class PAN(torch.nn.Module):
 
         process:
         """
+    # Optionally time this method via the `time_it` decorator and
+    # controlled by `neupan.configuration.time_print`.
+    # Enable printing by setting `configuration.time_print = True` or
+    # by creating `neupan(..., time_print=True)`.
 
         for i in range(self.iter_num):
 
@@ -246,9 +222,10 @@ class PAN(torch.nn.Module):
                     #     name="mosaic_translations", last_dim=2
                     # )                                        # (P,2)
                     # Normalize params once
-                    ratios = _norm_ratios(self.robot.mosaic_ratios, dtype=nom_s.dtype, device=nom_s.device)  # (P,)
-                    translations = _norm_translations(self.robot.mosaic_translations, dtype=nom_s.dtype, device=nom_s.device)  # (P,2)
-                    
+                    # ratios = _norm_ratios(self.robot.mosaic_ratios, dtype=nom_s.dtype, device=nom_s.device)  # (P,)
+                    # translations = _norm_translations(self.robot.mosaic_translations, dtype=nom_s.dtype, device=nom_s.device)  # (P,2)
+                    ratios = self.robot.mosaic_ratios
+                    translations = self.robot.mosaic_translations
 
                     P = ratios.numel()
                     T1 = nom_s.shape[1]  # receding+1
@@ -275,37 +252,40 @@ class PAN(torch.nn.Module):
                     else:
                         point_vel_b = None
 
-                    # Keep a base call to preserve R_list (yaw-only) and dune_points behavior
-                    _, R_base_list, obs_points_base_list = self.generate_point_flow(
-                        nom_s, obs_points, point_velocities
+                        # Compute R_list (yaw-only) directly from nom_s to avoid a duplicate
+                        # generate_point_flow call (reduces Python overhead).
+                        R_base_list = self._compute_R_list(nom_s)
+                        obs_points_base_list = [obs_points] if obs_points is not None else []
+
+                    # Batch generate point flows for all polys at once
+                    # scaled_nom_s_b: (P,3,T1), scaled_obs_b: (P,2,N) or None, point_vel_b: (P,2,N) or None
+                    batched_pf_list, batched_R_list, batched_obs_list = self.generate_point_flow(
+                        scaled_nom_s_b, scaled_obs_b if scaled_obs_b is not None else None,
+                        point_vel_b if point_vel_b is not None else None
                     )
 
-                    # --- prepare all per-poly lists (lightweight loop, heavy NN will be single call) ---
-                    per_poly_point_flow = []
-                    per_poly_obs_points = []
-                    for p in range(P):
-                        pf_p, _, obs_p = self.generate_point_flow(
-                            scaled_nom_s_b[p],
-                            scaled_obs_b[p] if scaled_obs_b is not None else None,
-                            point_vel_b[p]   if point_vel_b   is not None else None,
-                        )
-                        per_poly_point_flow.append(pf_p)  # list length T1
-                        per_poly_obs_points.append(obs_p) # list length T1
+                    # batched_pf_list: list of length T1, each element (P,2,N)
+                    # Stack to tensor (T1, P, 2, N) then reshape to (P*T1, 2, N)
+                    T1 = nom_s.shape[1]
+                    P = ratios.numel()
+                    pf_stack = torch.stack(batched_pf_list, dim=0)         # (T1, P, 2, N)
+                    pf_per_poly = pf_stack.permute(1, 0, 2, 3)             # (P, T1, 2, N)
+                    pf_flat = pf_per_poly.reshape(P * T1, pf_per_poly.size(2), pf_per_poly.size(3))
+                    point_flow_big = list(pf_flat.unbind(0))              # length P*T1, each (2,N)
 
-                    # flatten across polys: length = P * T1
-                    point_flow_big   = [pf for p in range(P) for pf in per_poly_point_flow[p]]
-                    obs_points_big   = [op for p in range(P) for op in per_poly_obs_points[p]]
+                    # obs_points: same shape handling
+                    obs_stack = torch.stack(batched_obs_list, dim=0)      # (T1, P, 2, N)
+                    obs_per_poly = obs_stack.permute(1, 0, 2, 3)          # (P, T1, 2, N)
+                    obs_flat = obs_per_poly.reshape(P * T1, obs_per_poly.size(2), obs_per_poly.size(3))
+                    obs_points_big = list(obs_flat.unbind(0))             # length P*T1
 
-                    # R_list must be same length as point_flow_big; R is yaw-only (independent of scale/translation)
-                    R_list_big = []
-                    for _p in range(P):
-                        if len(R_base_list) == T1:
-                            R_list_big.extend(R_base_list)
-                        elif len(R_base_list) == T1 - 1:
-                            # pad last rotation for the final time step if your generate_point_flow returns T entries
-                            R_list_big.extend(R_base_list + [R_base_list[-1]])
-                        else:
-                            raise ValueError(f"R_list length {len(R_base_list)} unexpected for T1={T1}")
+                    # R_list: use base R_list (yaw-only) repeated per-poly to match point_flow_big
+                    if len(R_base_list) == T1:
+                        R_list_big = R_base_list * P
+                    elif len(R_base_list) == T1 - 1:
+                        R_list_big = (R_base_list + [R_base_list[-1]]) * P
+                    else:
+                        raise ValueError(f"R_list length {len(R_base_list)} unexpected for T1={T1}")
 
                     # --- SINGLE dune call over all polys and times ---
                     mu_big, lam_big, sort_pts_big, dist_big = self.dune_layer(
@@ -314,24 +294,17 @@ class PAN(torch.nn.Module):
 
                     # --- regroup back to poly-major and rescale geometric outputs ---
                     items_per_poly = T1
-                    mu_list_mosaic, lam_list_mosaic = [], []
-                    sort_point_list_mosaic, distance_list_mosaic = [], []
+                    # chunk lists into P groups of length items_per_poly
+                    mu_chunks = [mu_big[i * items_per_poly:(i + 1) * items_per_poly] for i in range(P)]
+                    lam_chunks = [lam_big[i * items_per_poly:(i + 1) * items_per_poly] for i in range(P)]
+                    sort_chunks = [sort_pts_big[i * items_per_poly:(i + 1) * items_per_poly] for i in range(P)]
+                    dist_chunks = [dist_big[i * items_per_poly:(i + 1) * items_per_poly] for i in range(P)]
 
-                    for p in range(P):
-                        s = p * items_per_poly
-                        e = (p + 1) * items_per_poly
-
-                        mu_p  = mu_big[s:e]
-                        lam_p = lam_big[s:e]
-                        # rescale back from unit-space
-                        r = ratios[p]
-                        sort_p = [sp * r for sp in sort_pts_big[s:e]]
-                        dist_p = [d  * r for d  in dist_big[s:e]]
-
-                        mu_list_mosaic.append(mu_p)
-                        lam_list_mosaic.append(lam_p)
-                        sort_point_list_mosaic.append(sort_p)
-                        distance_list_mosaic.append(dist_p)
+                    mu_list_mosaic = mu_chunks
+                    lam_list_mosaic = lam_chunks
+                    # rescale geometric outputs back from unit-space using per-poly ratios
+                    sort_point_list_mosaic = [[sp * ratios[p] for sp in sort_chunks[p]] for p in range(P)]
+                    distance_list_mosaic = [[d * ratios[p] for d in dist_chunks[p]] for p in range(P)]
 
                     # Keep poly-major structure
                     mu_list = mu_list_mosaic
@@ -340,17 +313,15 @@ class PAN(torch.nn.Module):
                     distance_list = distance_list_mosaic
 
                     # min distance (original units)
-                    mins = []
-                    for poly in distance_list_mosaic:
-                        for d in poly:
-                            if isinstance(d, torch.Tensor) and d.numel() > 0:
-                                mins.append(torch.min(d))
+                    # Flatten all distance tensors and compute global min in a vectorized way
+                    mins = [torch.min(d) for poly in distance_list_mosaic for d in poly if isinstance(d, torch.Tensor) and d.numel() > 0]
                     if mins:
                         self.min_distance = float(torch.stack(mins).min().item())
 
                     # dune_points property behavior unchanged: store base obstacle points at time 0 (global)
-                    if obs_points_base_list and len(obs_points_base_list) > 0:
-                        self._points = obs_points_base_list[0]
+                    if obs_points is not None:
+                        # obs_points is the time-0 global points
+                        self._points = obs_points
 
 
                 else:
@@ -404,43 +375,143 @@ class PAN(torch.nn.Module):
         '''
         generate the point flow (robot coordinate), rotation matrix and obs points (global coordinate) list in each receding step
 
+        Supports both unbatched and batched inputs:
+          - unbatched nom_s: (3, T+1) -> returns lists of length T+1 with tensors (2, N) / (2,2)
+          - batched nom_s: (B, 3, T+1) -> returns lists of length T+1 with tensors (B, 2, N) / (B,2,2)
+
         Args:
-            nom_s: (3, receding+1)
-            obs_points: (2, n)
-            point_velocities: (2, n), x,y vel
+            nom_s: (3, receding+1) or (B,3,receding+1)
+            obs_points: (2, n) or (B,2,n)
+            point_velocities: (2, n) or (B,2,n), x,y vel
 
         Returns:
-            point_flow_list: list of (2, n); robot coordinate
-            R_list: list of (2, 2); rotation matrix
-            obs_points_list: list of (2, n); global coordinate
+            point_flow_list: list of (2, n) or (B,2,n)
+            R_list: list of (2, 2) or (B,2,2)
+            obs_points_list: list of (2, n) or (B,2,n)
         '''
 
-        # down sample the obs points by dune max num 
+        # Normalize shapes to batched form (B,3,T1) and (B,2,N)
+        input_was_batched = (nom_s.dim() == 3)
+        if nom_s.dim() == 2:
+            nom_s_b = nom_s.unsqueeze(0)  # (1,3,T1)
+        elif nom_s.dim() == 3:
+            nom_s_b = nom_s
+        else:
+            raise ValueError("nom_s must have ndim 2 or 3")
+
+        if obs_points.dim() == 2:
+            obs_b = obs_points.unsqueeze(0)  # (1,2,N)
+        elif obs_points.dim() == 3:
+            obs_b = obs_points
+        else:
+            raise ValueError("obs_points must have ndim 2 or 3")
 
         if point_velocities is None:
-            point_velocities = torch.zeros_like(obs_points)
+            pv_b = torch.zeros_like(obs_b)
+        else:
+            if point_velocities.dim() == 2:
+                pv_b = point_velocities.unsqueeze(0)
+            elif point_velocities.dim() == 3:
+                pv_b = point_velocities
+            else:
+                raise ValueError("point_velocities must have ndim 2 or 3")
 
-        if obs_points.shape[1] > self.dune_max_num:
-            self.print_once(f"down sample the obs points from {obs_points.shape[1]} to {self.dune_max_num}") 
-            obs_points = downsample_decimation(obs_points, self.dune_max_num)
-            point_velocities = downsample_decimation(point_velocities, self.dune_max_num)
+        B = nom_s_b.size(0)
+        T1 = self.T + 1
+        device = obs_b.device
+        dtype = obs_b.dtype
 
-        
-        obs_points_list = []
-        point_flow_list = []
-        R_list = []
+        # Down sample obs points per-batch if needed
+        N = obs_b.size(2)
+        if N > self.dune_max_num:
+            self.print_once(f"down sample the obs points from {N} to {self.dune_max_num}")
+            new_N = self.dune_max_num
+            obs_ds = torch.empty((B, 2, new_N), device=device, dtype=dtype)
+            pv_ds = torch.empty((B, 2, new_N), device=device, dtype=dtype)
+            for b in range(B):
+                obs_ds[b] = downsample_decimation(obs_b[b], new_N)
+                pv_ds[b] = downsample_decimation(pv_b[b], new_N)
+            obs_b = obs_ds
+            pv_b = pv_ds
+            N = new_N
 
-        if point_velocities is None:
-            point_velocities = torch.zeros_like(obs_points)
+        # Batch compute receding obstacle positions over time: (T1, B, 2, N)
+        times = torch.arange(0, T1, device=device, dtype=dtype).view(T1, 1, 1, 1)  # (T+1,1,1,1)
+        pv_expand = pv_b.unsqueeze(0) * self.dt                                      # (1,B,2,N)
+        receding_obs = obs_b.unsqueeze(0) + times * pv_expand                        # (T1,B,2,N)
 
-        for i in range(self.T+1):
-            receding_obs_points = obs_points + i * (point_velocities * self.dt)
-            obs_points_list.append(receding_obs_points) 
-            p0, R = self.point_state_transform(nom_s[:, i], receding_obs_points)
-            point_flow_list.append(p0)
-            R_list.append(R)
+        # Prepare transforms from nom_s_b: nom_s_b (B,3,T1) -> permute to (T1,B,3)
+        nom_perm = nom_s_b.permute(2, 0, 1)   # (T1, B, 3)
+        trans = nom_perm[:, :, 0:2].unsqueeze(-1)  # (T1, B, 2, 1)
+        theta = nom_perm[:, :, 2]                  # (T1, B)
+
+        cos_t = torch.cos(theta)
+        sin_t = torch.sin(theta)
+
+        # Rotation matrices per time and batch: (T1, B, 2, 2)
+        R_batched = torch.empty((T1, B, 2, 2), device=device, dtype=dtype)
+        R_batched[:, :, 0, 0] = cos_t
+        R_batched[:, :, 0, 1] = -sin_t
+        R_batched[:, :, 1, 0] = sin_t
+        R_batched[:, :, 1, 1] = cos_t
+
+        # Compute point flows in robot frame: p0 = R^T @ (receding_obs - trans)
+        diff = receding_obs - trans                 # (T1, B, 2, N)
+        # matmul: (T1,B,2,2) x (T1,B,2,N) -> (T1,B,2,N)
+        p0_batched = torch.matmul(R_batched.transpose(-1, -2), diff)  # (T1,B,2,N)
+
+        # Convert batched tensors to lists matching previous API (list length T1)
+        # Each element is (B,2,N), R_list elements are (B,2,2), obs_points_list elements are (B,2,N)
+        point_flow_list = list(p0_batched.unbind(0))
+        R_list = list(R_batched.unbind(0))
+        obs_points_list = list(receding_obs.unbind(0))
+
+        # If original inputs were unbatched, squeeze the batch dimension for backward compatibility
+        if not input_was_batched:
+            point_flow_list = [pf.squeeze(0) for pf in point_flow_list]       # (2,N)
+            R_list = [R.squeeze(0) for R in R_list]                           # (2,2)
+            obs_points_list = [op.squeeze(0) for op in obs_points_list]       # (2,N)
 
         return point_flow_list, R_list, obs_points_list
+
+    def _compute_R_list(self, nom_s: torch.Tensor):
+        """
+        Compute rotation matrices R_list from nom_s without transforming obstacles.
+
+        Supports both unbatched and batched inputs (same conventions as generate_point_flow):
+          - unbatched nom_s: (3, T1) -> returns list length T1 of (2,2)
+          - batched nom_s: (B, 3, T1) -> returns list length T1 of (B,2,2)
+        """
+        input_was_batched = (nom_s.dim() == 3)
+        if nom_s.dim() == 2:
+            nom_s_b = nom_s.unsqueeze(0)
+        elif nom_s.dim() == 3:
+            nom_s_b = nom_s
+        else:
+            raise ValueError("nom_s must have ndim 2 or 3")
+
+        # nom_s_b: (B, 3, T1) -> permute to (T1, B, 3)
+        nom_perm = nom_s_b.permute(2, 0, 1)   # (T1, B, 3)
+        theta = nom_perm[:, :, 2]            # (T1, B)
+
+        cos_t = torch.cos(theta)
+        sin_t = torch.sin(theta)
+
+        T1, B = cos_t.shape
+        device = nom_s_b.device
+        dtype = nom_s_b.dtype
+
+        R_batched = torch.empty((T1, B, 2, 2), device=device, dtype=dtype)
+        R_batched[:, :, 0, 0] = cos_t
+        R_batched[:, :, 0, 1] = -sin_t
+        R_batched[:, :, 1, 0] = sin_t
+        R_batched[:, :, 1, 1] = cos_t
+
+        R_list = list(R_batched.unbind(0))
+        if not input_was_batched:
+            R_list = [R.squeeze(0) for R in R_list]
+
+        return R_list
 
 
     def point_state_transform(self, state: torch.Tensor, obs_points: torch.Tensor):

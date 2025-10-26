@@ -44,12 +44,17 @@ def time_it(name="Function"):
             result = func(self, *args, **kwargs)
             end = time.time()
             wrapper.func_count += 1
+            # record last and cumulative elapsed times for external inspection
+            wrapper.last_elapsed = end - start
+            wrapper.total_time += wrapper.last_elapsed
             if configuration.time_print:
                 print(f"{name} execute time {(end - start):.6f} seconds")
             return result
 
         wrapper.count = 0
         wrapper.func_count = 0
+        wrapper.last_elapsed = 0.0
+        wrapper.total_time = 0.0
         return wrapper
 
     return decorator

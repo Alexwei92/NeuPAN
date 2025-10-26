@@ -77,23 +77,37 @@ class robot:
                 self.G, self.h = gen_inequal_from_vertex(self.base_square_vertices)
                 # compute translations from base to other parts (centroid differences)
                 base_center = np.mean(self.base_square_vertices, axis=1, keepdims=True)
-                self.mosaic_translations = []
-                self.mosaic_ratios = []
+                # collect as simple python lists first, then convert to device tensors
+                _trans_list = []
+                _ratio_list = []
                 unit_square = self.base_square_vertices
                 unit_square_side = np.linalg.norm(unit_square[:, 1] - unit_square[:, 0])
-                # print(f"mosaic unit square side: {unit_square_side}")
+                # compute per-part translation (base_center - centroid) and scale ratio
                 for i in range(self.num_of_polygons):
                     vi = self.vertices_list[i]
                     ci = np.mean(vi, axis=1, keepdims=True)
-                    self.mosaic_translations.append(to_device(torch.from_numpy(base_center - ci).float()))
-                    # calculate ratios based on the side 
+                    # (2,1) -> (2,) numpy then to torch later
+                    trans_np = (base_center - ci).reshape(2,)
+                    _trans_list.append(trans_np)
+                    # ratio scalar
                     square_side = np.linalg.norm(vi[:, 1] - vi[:, 0])
-                    # print(f"mosaic part {i} side: {square_side}")
-                    self.mosaic_ratios.append(square_side / unit_square_side)
-                # print(f"mosaic translations:{self.mosaic_translations}, mosaic ratios: {self.mosaic_ratios}")
-                # treat downstream as single polygon
+                    _ratio_list.append(float(square_side / unit_square_side))
+
+                # Convert to torch tensors in the desired shapes so downstream code (PAN)
+                # can use them directly without additional normalization helpers.
+                # mosaic_translations: (P,2), mosaic_ratios: (P,)
+                if len(_trans_list) > 0:
+                    self.mosaic_translations = to_device(torch.from_numpy(np.vstack(_trans_list)).float())
+                else:
+                    self.mosaic_translations = to_device(torch.empty((0, 2), dtype=torch.float32))
+
+                if len(_ratio_list) > 0:
+                    self.mosaic_ratios = to_device(torch.tensor(_ratio_list, dtype=torch.float32)).flatten()
+                else:
+                    self.mosaic_ratios = to_device(torch.empty((0,), dtype=torch.float32))
+
+                # treat downstream as single polygon (we keep num_of_polygons for reference)
                 self.is_multipolygon = False
-                # keep num_of_polygons as the true count for reference
             else:
                 # original multipolygon behavior
                 self.vertices_list = self.cal_vertices_from_multipolygon(vertices, wheelbase)
