@@ -5,17 +5,8 @@ import argparse
 import torch
 
 from neupan.configuration import np_to_tensor, tensor_to_np
-from neupan.util import downsample_decimation, time_it
+from neupan.util import time_it
 import time
-
-# import warnings
-
-# warnings.filterwarnings(
-#     "ignore",
-#     category=UserWarning,
-#     message=r"Converting [GA] to a CSC matrix; may take a while\.",
-#     module=r"^ecos(\.ecos)?$",
-# )
 
 
 class Timer:

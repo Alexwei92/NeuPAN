@@ -101,6 +101,87 @@ class DUNE(torch.nn.Module):
 
         return mu_list, lam_list, sort_point_list, distance_list
 
+    # @time_it('- dune forward')
+    def batch_forward(self, point_flow: list[torch.Tensor], R_list: list[torch.Tensor], obs_points_list: list[torch.Tensor]=[]) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
+
+        '''
+        map point flow to the latent distance features: lam, mu
+
+        Args:
+            point_flow: point flow under the robot coordinate, list of (state_dim, num_points); list length: T+1
+            R_list: list of Rotation matrix, list of (2, 2), used to generate the lam from mu; list length: T
+            obstacle_points: tensor of shape (2, num_points), global coordinate; 
+
+        Returns: 
+            lam_list: list of lam tensor, each element is a tensor of shape (state_dim, num_points); list length: T+1
+            mu_list: list of mu tensor, each element is a tensor of shape (edge_number, num_points); list length: T+1
+            sort_point_list: list of point tensor, each element is a tensor of shape (state_dim, num_points); list length: T+1; 
+        '''
+       
+        N = len(point_flow)
+        assert N == len(R_list) == len(obs_points_list)
+        
+        self.obstacle_points = obs_points_list[0] # current obstacle points considered in the dune at time 0
+        
+        total_points = torch.cat([pf.T for pf in point_flow], dim=0) # (num_points, 2)
+        # map the point flow to the latent distance features mu
+        with torch.no_grad():
+            total_mu = self.model(total_points).T
+        
+        point_sizes = [pf.shape[1] for pf in point_flow]
+        P = max(point_sizes)      
+                
+        cols = to_device(torch.arange(P).unsqueeze(0)).expand(N, P)
+        mask = cols < to_device(torch.as_tensor(point_sizes).unsqueeze(1)) # (N, P)
+                
+        point_flow_b = point_flow[0].new_zeros((N, 2, P)) # (N, 2, P)
+        obs_points_b = obs_points_list[0].new_zeros((N, 2, P)) # (N, 2, P)
+        mu_b = total_mu.new_zeros((self.edge_dim, N, P)) # (E, N, P)
+        
+        row_idx = to_device(torch.arange(N).unsqueeze(1).expand(N, P))[mask]
+        col_idx = cols[mask]
+        
+        point_flow_b[row_idx, :, col_idx] = total_points # (num_points, 2)
+        obs_points_b[row_idx, :, col_idx] = torch.cat([op.T for op in obs_points_list], dim=0) # (num_points, 2)
+        mu_b[:, row_idx, col_idx] = total_mu
+        
+        # lam = - R @ G^T @ mu
+        temp = torch.einsum('i j, j t p -> i t p', -self.G.T, mu_b) # (2, N, P)
+        R = torch.stack(R_list, dim=0) # (N, 2, 2)
+        lam_b = torch.bmm(R, temp.permute(1, 0, 2)) # (N, 2, P)
+
+        distance_b = self.cal_objective_distance_batch(mu_b, point_flow_b) # (N, P)
+                
+        # a trick to sort only valid points
+        very_neg = distance_b.new_full((), -1e30)
+        row_max = torch.where(mask, distance_b, very_neg).amax(dim=1, keepdim=True)
+        
+        row_mean_abs = (distance_b.abs() * mask).sum(dim=1, keepdim=True) / mask.sum(dim=1, keepdim=True).clamp_min(1)        
+        big = row_max + row_mean_abs + 1
+        distance_masked = torch.where(mask, distance_b, big)
+        
+        sorted_idx_b = torch.argsort(distance_masked, dim=1) # (N, P)
+        sorted_distance_b = torch.gather(distance_b, 1, sorted_idx_b) # (N, P)
+
+        # (E, N, P) -> (N, E, P)
+        sorted_mu_b = torch.gather(mu_b.transpose(0, 1), 2, sorted_idx_b.unsqueeze(1).expand(-1, self.edge_dim, -1))
+        # (N, 2, P) -> (N, 2, P)
+        sorted_lam_b = torch.gather(lam_b, 2, sorted_idx_b.unsqueeze(1).expand(-1, 2, -1))
+        # (N, 2, P) -> (N, 2, P)
+        sorted_obs_points_b = torch.gather(obs_points_b, 2, sorted_idx_b.unsqueeze(1).expand(-1, 2, -1))
+        
+        mu_list, lam_list, sort_point_list, distance_list = [], [], [], []        
+        for i, s in enumerate(point_sizes):               
+            mu_list.append(sorted_mu_b[i, :, :s])
+            lam_list.append(sorted_lam_b[i, :, :s])
+            sort_point_list.append(sorted_obs_points_b[i, :, :s])
+            distance_list.append(sorted_distance_b[i, :s])
+            
+            if i == 0:
+                self.min_distance = sorted_distance_b[i, :s].min()
+        
+        return mu_list, lam_list, sort_point_list, distance_list
+
 
     def cal_objective_distance(self, mu: torch.Tensor, p0: torch.Tensor) -> torch.Tensor:
 
@@ -122,6 +203,23 @@ class DUNE(torch.nn.Module):
 
         return distance
     
+    
+    def cal_objective_distance_batch(self, mu: torch.Tensor, p0: torch.Tensor) -> torch.Tensor:
+
+        '''
+        input: 
+            mu: (edge_dim, N, num_points)
+            p0: (N, state_dim, num_points)   
+        output:
+            distance:  mu.T (G @ p0 - h),  (N, num_points)
+        ''' 
+
+        temp = torch.einsum('e i, t i p -> e t p', self.G, p0)
+        temp = temp - self.h.view(-1, 1, 1) # (edge_dim, N, num_points)
+
+        distance = (mu * temp).sum(dim=0) # (N, num_points)
+
+        return distance
 
 
     def load_model(self, checkpoint: Optional[str]=None, train_kwargs: Optional[dict]=None):

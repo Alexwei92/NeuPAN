@@ -289,7 +289,7 @@ class InitialPath:
 
         return(
             arrive_distance < arrive_threshold
-            and self.point_index >= (len(self.cur_curve) - arrive_index_threshold - 2)
+            and self.point_index >= (len(self.cur_curve) - arrive_index_threshold)
         )
 
     def split_path_with_gear(self):
