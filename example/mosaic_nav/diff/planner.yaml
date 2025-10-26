@@ -10,8 +10,8 @@ log_cost: True
 robot:
   kinematics: 'diff'
   shape: 'mosaic'
-  max_speed: [8.0, 0.55]
-  max_acce: [8.0, 1.5]
+  max_speed: [8.0, 5.0]
+  max_acce: [8.0, 8.0]
   base_square: [[-1., 1.], [1., 1.], [1., -1.], [-1., -1.]]
   vertices: [
       # [[-1.0, 1.0], [1.0, 1.0], [1.0, -1.0], [-1.0, -1.0]],
@@ -52,7 +52,7 @@ pan:
   iter_threshold: 0.1
 
 adjust:
-  q_s: 3.5
+  q_s: 1.0
   p_u: 1.0
   eta: 10.059
   d_max: 1.5

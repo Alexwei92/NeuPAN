@@ -290,11 +290,9 @@ class NRMP(torch.nn.Module):
                             temp = (
                                 torch.bmm(lam.T.unsqueeze(1), point.T.unsqueeze(2))
                             ).squeeze(1)
-                            if i==0:
-                                fb = temp + mu.T @ self.h
-                            else:
-                                ratio = self.ratios[poly_id-1]
-                                fb = temp + mu.T @ self.h / ratio
+                          
+                            ratio = self.ratios[poly_id]
+                            fb = temp + mu.T @ self.h * ratio
                             fa_list[t][i, :] = fa[:, :]
                             fb_list[t][i, :] = fb[:, :]
 

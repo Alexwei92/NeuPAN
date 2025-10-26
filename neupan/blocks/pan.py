@@ -232,8 +232,8 @@ class PAN(torch.nn.Module):
                     if translations.size(0) != P:
                         raise ValueError(f"mosaic_translations first dim {translations.size(0)} != P {P}")
 
-                    # obs_points_orig = obs_points.clone()
-                    # nom_s_orig = nom_s.clone()
+                    obs_points_orig = obs_points.clone()
+                    nom_s_orig = nom_s.clone()
 
                     # translate then scale nom_s per poly
                     nom_s_b = nom_s.unsqueeze(0).expand(P, -1, -1).clone()       # (P,3,T1)
@@ -328,37 +328,6 @@ class PAN(torch.nn.Module):
                         # obs_points is the time-0 global points
                         self._points = obs_points
 
-                    # calculate the list of points given distances
-                    # distance_list_mosaic / distance_list have length T1 (receding+1)
-                    # iterate 0..T1-1 (range(T1)). Using range(T1+1) caused an IndexError.
-                    # sorted_ids_list = []
-                    # for i in range(T1):
-                    #     distance_per_poly_slices = [distance_list[poly_id][i][:min(10, distance_list[poly_id][i].shape[0] if distance_list[poly_id][i].dim() > 0 else 1)]
-                    #                                 for poly_id in range(P)]
-                    #     all_distances = torch.cat(distance_per_poly_slices, dim=0)
-                        
-                    #     distance_slice_lengths = torch.tensor([len(distance_poly_slice) for distance_poly_slice in distance_per_poly_slices])
-
-                    #     poly_id = torch.repeat_interleave(torch.arange(P), distance_slice_lengths)
-                    #     local_id = torch.cat([torch.arange(L) for L in distance_slice_lengths.tolist()], dim=0)
-
-                    #     topk_distance, topk_id = torch.topk(all_distances, min(10, all_distances.numel()), largest=False)
-                    #     topk_poly_id = poly_id[topk_id]
-                    #     topk_local_id = local_id[topk_id]
-
-                    #     sorted_ids = torch.stack((topk_poly_id, topk_local_id), dim=1)
-                    #     sorted_ids_list.append(sorted_ids)
-
-                    #     if i == 0:
-                    #         all_points = []
-                    #         for poly_id, local_id in sorted_ids:
-                    #             all_points.append(sort_point_list[poly_id][0][:, local_id : local_id+1])
-                    #         obstacle_points = torch.cat(all_points, dim=1)
-                    # print("*******************")
-                    # # print(f"Top-10 distances: {distance_list[0][: 10]}")
-                    # print(f"obs points: {obstacle_points}")
-
-
                     # # calculate the unit one
                     # point_flow_list_u, R_list_u, obs_points_list_u = self.generate_point_flow(
                     # nom_s_orig, obs_points_orig, None
@@ -366,12 +335,9 @@ class PAN(torch.nn.Module):
                     # mu_list_u, lam_list_u, sort_point_list_u, distance_list_u = self.forward_dune(
                     #     point_flow_list_u, R_list_u, obs_points_list_u
                     # )
-                    # # min_dist_u = min([torch.min(d).item() for poly in distance_list_u for d in poly if isinstance(d, torch.Tensor) and d.numel() > 0])
-                    # # print("unit distances: ", distance_list_u)
-                    # # obstacle_points_unit = distance_list_u[: 10]
-                    # # print(f"distances of unit case: {obstacle_points_unit}")
-                    # print(f"unit obs points: {sort_point_list_u[0][:, : 10]}")
-
+                    # min_dist_u = min([torch.min(d).item() for poly in distance_list_u for d in poly if isinstance(d, torch.Tensor) and d.numel() > 0])
+                    # print("unit distances: ", min_dist_u)
+                    
 
                 else:
                     point_flow_list, R_list, obs_points_list = self.generate_point_flow(
