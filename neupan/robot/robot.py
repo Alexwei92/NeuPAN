@@ -82,12 +82,12 @@ class robot:
                 _ratio_list = []
                 unit_square = self.base_square_vertices
                 unit_square_side = np.linalg.norm(unit_square[:, 1] - unit_square[:, 0])
-                # compute per-part translation (base_center - centroid) and scale ratio
+                # compute per-part translation (centroid - base_center) and scale ratio
                 for i in range(self.num_of_polygons):
                     vi = self.vertices_list[i]
                     ci = np.mean(vi, axis=1, keepdims=True)
                     # (2,1) -> (2,) numpy then to torch later
-                    trans_np = (base_center - ci).reshape(2,)
+                    trans_np = (ci - base_center).reshape(2,)
                     _trans_list.append(trans_np)
                     # ratio scalar
                     square_side = np.linalg.norm(vi[:, 1] - vi[:, 0])
