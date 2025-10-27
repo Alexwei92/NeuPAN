@@ -319,25 +319,10 @@ class PAN(torch.nn.Module):
                     mins = [torch.min(d) for poly in distance_list_mosaic for d in poly if isinstance(d, torch.Tensor) and d.numel() > 0]
                     if mins:
                         self.min_distance = float(torch.stack(mins).min().item())
-                        # print("***************")
-                        # print(f"Mosaic min distance: {self.min_distance}")
-                        # print first 5 sorted distance values for debugging
-                        # print(f"distance_list_mosaic: {distance_list_mosaic}")
                     # dune_points property behavior unchanged: store base obstacle points at time 0 (global)
                     if obs_points is not None:
                         # obs_points is the time-0 global points
                         self._points = obs_points
-
-                    # # calculate the unit one
-                    # point_flow_list_u, R_list_u, obs_points_list_u = self.generate_point_flow(
-                    # nom_s_orig, obs_points_orig, None
-                    # )
-                    # mu_list_u, lam_list_u, sort_point_list_u, distance_list_u = self.forward_dune(
-                    #     point_flow_list_u, R_list_u, obs_points_list_u
-                    # )
-                    # min_dist_u = min([torch.min(d).item() for poly in distance_list_u for d in poly if isinstance(d, torch.Tensor) and d.numel() > 0])
-                    # print("unit distances: ", min_dist_u)
-                    
 
                 else:
                     point_flow_list, R_list, obs_points_list = self.generate_point_flow(
