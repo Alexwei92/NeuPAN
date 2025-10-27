@@ -4,8 +4,9 @@ from neupan.blocks.initial_path import InitialPath
 from neupan.blocks.nrmp import NRMP
 from neupan.blocks.dune import DUNE
 from neupan.blocks.pan import PAN
+from neupan.blocks.mppi import MPPIHandler
 
-__all__ = ['ObsPointNet', 'DUNETrain', 'InitialPath', 'NRMP', 'DUNE', 'PAN']
+__all__ = ['ObsPointNet', 'DUNETrain', 'InitialPath', 'NRMP', 'DUNE', 'PAN', 'MPPIHandler']
 
 
 
