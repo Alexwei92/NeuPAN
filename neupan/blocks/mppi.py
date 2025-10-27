@@ -40,12 +40,12 @@ class MPPIHandler:
     def __init__(
         self,
         robot,
-        receding: int = 30,
+        receding: int = 20,
         step_time: float = 0.1,
         ref_speed: float = 4.0,
-        num_samples: int = 500,
+        num_samples: int = 300,
         noise_sigma: list = [0.5, 0.5],
-        lambda_: float = 1.0,
+        lambda_: float = 0.1,
         max_obs_num: int = 10,
         dtype: torch.dtype = torch.float32,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
@@ -227,26 +227,41 @@ class MPPIHandler:
         M, K, T, nx = state.shape
         eps = 1e-8
         
+        # Hyperparameters
+        gamma = self.hyperparameters.get("gamma", 0.98) # time discount factor
+        map_scale = self.hyperparameters.get("map_scale", 30.0) # map scale [m]
+        r_gate = self.hyperparameters.get("r_gate", 10.0) # goal gate radius [m]
+        d_safe = self.hyperparameters.get("d_safe", 2.0) # safety distance [m]
+        pos_tol = self.hyperparameters.get("pos_tol", 0.2) # position tolerance to goal [m]
+        yaw_tol = self.hyperparameters.get("yaw_tol", 0.1) # yaw tolerance to goal [rad]
+        early_R = self.hyperparameters.get("early_R", 500.0) # early arrival reward
         
-        gamma = self.hyperparameters.get("gamma", 0.98)
-        r_gate = self.hyperparameters.get("r_gate", 10.0)
+        # Normalization
+        inv_U2 = 1.0 / (self.robot_params.max_du**2)
+        inv_scale2 = 1.0 / (map_scale**2)
+        inv_pi2 = 1.0 / (torch.pi**2)
+        inv_v = 1.0 / self.ref_speed
+        inv_v2 = inv_v**2
 
         # Time discount
         td = (gamma ** torch.arange(T, device=self.device)).view(1, 1, T)  # (1, 1, T) # TODO: can be cached
 
         # --------- control cost ---------
-        control_cost = (action**2).sum(dim=-1)  # (M, K, T)
+        # control_cost = (action**2).sum(dim=-1)  # (M, K, T)
+        control_cost = (action**2 * inv_U2).sum(dim=-1)  # (M, K, T)
 
         # --------- progress cost ---------
         goal_vec = self.goal[0:2, 0].view(1, 1, 1, 2) - state[..., 0:2]  # (M, K, T, 2)
         r2 = (goal_vec**2).sum(dim=-1)  # (M, K, T)
         dr2 = r2.diff(dim=-1, prepend=r2[..., :1])  # (M, K, T)
-        progress_cost = torch.nn.functional.relu(dr2)  # (M, K, T)
+        progress_cost = torch.nn.functional.relu(dr2) # (M, K, T)
+        progress_cost *= inv_scale2 # normalization
 
         # --------- yaw cost (gated) ---------
         gate = torch.exp(-r2 / (2 * (r_gate**2)))  # (M, K, T)
         yaw_err = (state[..., 2] - self.goal[2, 0] + torch.pi) % (2 * torch.pi) - torch.pi  # (M, K, T)
-        goal_yaw_cost = gate * (yaw_err**2)  # (M, K, T)
+        goal_yaw_cost = gate * (yaw_err**2) * inv_pi2 # (M, K, T)
+        goal_yaw_cost *= inv_pi2 # normalization
 
         # --------- speed toward goal cost ---------
         inv_r = torch.rsqrt(r2 + eps)  # (M, K, T)
@@ -256,11 +271,13 @@ class MPPIHandler:
         )  # (M, K, T, 2)
         v_toward = state[..., 3] * (fwd * unit_dir).sum(dim=-1)  # (M, K, T)
         speed_toward_goal_cost = -v_toward  # (M, K, T)
+        speed_toward_goal_cost *= inv_v # normalization
 
         # --------- reference speed cost (gated) ---------
         ref_speed_cost = (1.0 - gate) * (
             state[..., 3] - self.ref_speed
         ) ** 2  # (M, K, T)
+        ref_speed_cost *= inv_v2 # normalization
 
         # --------- collision cost ---------
         collision_cost = torch.zeros_like(control_cost)
@@ -272,133 +289,82 @@ class MPPIHandler:
             if self.robot_params.is_multipolygon:
                 all_distances = []
                 for poly_id in range(self.robot_params.num_of_polygons):
-                    all_distances = torch.cat(distance_list[poly_id], dim=0).view(
+                    distances_per_poly = torch.cat(distance_list[poly_id], dim=0).view(
                         M, K, T, -1
                     )
-                    topk_distance = all_distances[
-                        ..., : min(self.max_obs_num, all_distances.shape[-1])
-                    ]  # (M, K, T, topk)
+                    all_distances.append(distances_per_poly[..., : min(self.max_obs_num, distances_per_poly.shape[-1])])
+                all_distances = torch.cat(all_distances, dim=-1)
+                
+                if self.robot_params.num_of_polygons > 1:
+                    topk_distance, _ = torch.topk(all_distances, min(self.max_obs_num, all_distances.shape[-1]), dim=-1, largest=False)  # (M, K, T, topk)
+                else:
+                    topk_distance = all_distances[..., : min(self.max_obs_num, all_distances.shape[-1])]
             else:
                 all_distances = torch.cat(distance_list, dim=0).view(M, K, T, -1)
                 topk_distance = all_distances[
                     ..., : min(self.max_obs_num, all_distances.shape[-1])
                 ]  # (M, K, T, topk)
 
-            d_safe = 2.0 # TODO: hyperparameter
-            beta = 1.0 # TODO: hyperparameter
-
             collision_penalty = torch.nn.functional.softplus(
                 d_safe - topk_distance
             )  # (M, K, T, topk)
-            collision_cost = beta * collision_penalty.mean(dim=-1)  # (M, K, T)
+            collision_cost = collision_penalty.mean(dim=-1)  # (M, K, T)
             
-        # --------- early termination reward ---------
-        pos_tol = 0.2 # TODO: hyperparameter
-        yaw_tol = 0.1 # TODO: hyperparameter
-        R_goal = 200.0 # TODO: hyperparameter
-
+        # --------- near goal helper cost ---------
+        # near = (torch.sqrt(r2 + eps) < r_gate).float()
+        
+        # v_min_near = 0.07 * self.ref_speed
+        # keep_move_cost = near * torch.nn.functional.relu(v_min_near - state[..., 3]) # (M, K, T)
+        # yaw_rate = state[..., 3] * torch.tan(state[..., 4]) / self.robot_params.L
+        # align_turn_cost = -(yaw_rate**2) * (1.0 + 4.0 * near)
+        
+        # --------- early termination reward & cost ---------
         at_goal = (r2 < (pos_tol**2)) & (yaw_err.abs() < yaw_tol)  # (M, K, T)
         reached_cumsum = at_goal.cumsum(dim=-1).clamp_max_(1)  # (M, K)
         first_mask = at_goal & (reached_cumsum == 1)  # (M, K, T)
-        term_bonus = -R_goal * first_mask.float()
+        term_bonus = -early_R * first_mask.float()
+        is_last= torch.zeros_like(r2)
+        is_last[..., -1] = 1.0
+        term_pose_cost = is_last * (3.0 * r2 * inv_scale2 + 2.0 * yaw_err**2 * inv_pi2)
 
-
-
-        # w_control = 0.01
-        # w_goal_abs = 0.2
+        # w_control = 0.1
+        # w_goal_abs = 2.0
         # w_progress = 1.0
-        # w_heading = 0.5
-        # w_speed_toward = 0.3
-        # w_ref_speed = 0.05
-        # w_collision = 1.0
-
-        w_control = 0.1
-        w_goal_abs = 2.0
+        # w_heading = 5.0
+        # w_speed_toward = 2.0
+        # w_ref_speed = 1.0
+        # w_collision = 5.0
+        
+        w_control = 0.01
+        w_goal_abs = 0.25
         w_progress = 1.0
-        w_heading = 5.0
-        w_speed_toward = 2.0
-        w_ref_speed = 1.0
-        w_collision = 5.0
+        w_yaw = 1.0
+        w_speed_toward = 0.35
+        w_ref_speed = 0.1
+        w_collision = 1.0
+        w_term_funnel = 0.5
+        # w_move_near = 0.3
+        # w_align_turn = 0.3
+
+        # w_yaw  = w_yaw * (1.0 + 4.0*near)
+        # w_control  = w_control * (1.0 - 0.5*near)
+        # w_progress = w_progress * (1.0 + 2.0*((r2[...,0] - r2[...,-1] < 0.05*(L_pos**2)).float().unsqueeze(-1)))  # anti-stuck
+
 
         per_step = (
             w_control * control_cost
-            + w_goal_abs * r2 / (10.0 ** 2)
-            + w_progress * progress_cost / (10 ** 2)
-            + w_heading * goal_yaw_cost / (torch.pi ** 2)
-            + w_speed_toward * speed_toward_goal_cost / 2.0
-            + w_ref_speed * ref_speed_cost / (2.0 ** 2)
+            + w_goal_abs * r2 / (map_scale**2)
+            + w_progress * progress_cost
+            + w_yaw * goal_yaw_cost
+            + w_speed_toward * speed_toward_goal_cost
+            + w_ref_speed * ref_speed_cost
             + w_collision * collision_cost
+            + w_term_funnel * term_pose_cost
+            # + w_move_near * keep_move_cost
+            # + w_align_turn * align_turn_cost
         )  # (M, K, T)
 
-        # per_step = (
-        #     w_control * normalize_with_median(control_cost)
-        #     + w_goal_abs * normalize_with_minmax(r2)
-        #     + w_progress * normalize_with_median(progress_cost)
-        #     # + w_heading * normalize_with_median(goal_yaw_cost)
-        #     # + w_speed_toward * normalize_with_median(speed_toward_goal_cost)
-        #     + w_ref_speed * normalize_with_median(ref_speed_cost)
-        #     # + w_collision * normalize_with_median(collision_cost)
-        # )  # (M, K, T)
-
         cost = (per_step + term_bonus) * td  # (M, K, T)
-
-        ###
-
-        # M, K, T, nx = state.shape
-        
-        # # Control cost
-        # control_cost = (action**2).sum(dim=-1)  # (M, K, T)
-
-        # # Goal cost
-        # goal_xy_cost = torch.sum(
-        #     (state[..., 0:2] - self.goal[0:2, 0]) ** 2, dim=-1
-        # )  # (M, K, T)
-        # goal_yaw_cost = (
-        #     (state[..., 2] - self.goal[2, 0] + torch.pi) % (2 * torch.pi) - torch.pi
-        # ) ** 2  # (M, K, T)
-
-        # # Ref speed cost (M, K, T)
-        # ref_speed_cost = (state[..., 3] - self.ref_speed) ** 2
-
-        # # Collision cost (M, K, T)
-        # collision_cost = torch.zeros_like(control_cost)
-
-        # if self.obs_points is not None:
-        #     distance_list = self.pan_forward(
-        #         state.view(M * K * T, nx)[:, :3], self.obs_points
-        #     )
-
-        #     if self.robot_params.is_multipolygon:
-        #         for poly_id in range(self.robot_params.num_of_polygons):
-        #             all_distances = torch.cat(distance_list[poly_id], dim=0).view(
-        #                 M, K, T, -1
-        #             )
-        #     else:
-        #         all_distances = torch.cat(distance_list, dim=0).view(M, K, T, -1)
-
-        #     topk_distance = all_distances[
-        #         ..., : min(self.max_obs_num, all_distances.shape[-1])
-        #     ]
-
-        #     min_distance = topk_distance[..., 0]  # (M, K, T)
-        #     # collision_cost = -min_distance
-        #     collision_cost = torch.where(
-        #         min_distance > 3.0, torch.zeros_like(min_distance), -min_distance
-        #     )
-
-        # # print(f"control cost: {control_cost.sum(dim=-1)}")
-        # # print(f"ref speed cost: {ref_speed_cost.sum(dim=-1)}")
-        # # print(f"goal xy cost: {goal_xy_cost.sum(dim=-1)}")
-        # # print(f"goal yaw cost: {goal_yaw_cost.sum(dim=-1)}")
-        # # print(f"collision cost: {collision_cost.sum(dim=-1)}")
-
-        # cost = (
-        #     control_cost
-        #     + ref_speed_cost
-        #     + goal_xy_cost * 10
-        #     + goal_yaw_cost * 20
-        #     + collision_cost * 400
-        # )
 
         return cost
 
