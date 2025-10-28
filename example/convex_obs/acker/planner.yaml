@@ -34,7 +34,7 @@ pan:
 adjust:
   q_s: 1.0
   p_u: 1.0
-  eta: 15.0
+  eta: 18.0
   d_max: 0.5
   d_min: 0.1
 

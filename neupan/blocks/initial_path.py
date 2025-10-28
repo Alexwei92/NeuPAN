@@ -79,7 +79,6 @@ class InitialPath:
         state_pre_list = [pre_state]
         state_ref_list = [ref_state]
         state_ref_list[0][2, 0] = pre_state[2, 0] + WrapToPi(ref_state[2, 0] - pre_state[2, 0])
-
         assert self.cur_point.shape[0] >= 4
         gear_list = [self.cur_point[-1, 0]] * self.T
 
