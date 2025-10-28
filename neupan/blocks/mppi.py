@@ -348,7 +348,7 @@ class MPPIHandler:
 
         # w_yaw  = w_yaw * (1.0 + 4.0*near)
         # w_control  = w_control * (1.0 - 0.5*near)
-        # w_progress = w_progress * (1.0 + 2.0*((r2[...,0] - r2[...,-1] < 0.05*(L_pos**2)).float().unsqueeze(-1)))  # anti-stuck
+        # w_progress = w_progress * (1.0 + 2.0*((r2[...,0] - r2[...,-1] < 0.05*(map_scale**2)).float().unsqueeze(-1)))  # anti-stuck
 
 
         per_step = (
