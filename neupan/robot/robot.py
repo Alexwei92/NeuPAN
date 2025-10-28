@@ -19,12 +19,13 @@ along with NeuPAN planner. If not, see <https://www.gnu.org/licenses/>.
 '''
 
 from math import inf
+from pickle import TRUE
 import numpy as np
 from typing import Optional, Union
 import cvxpy as cp
 from math import sin, cos, tan
 import torch
-from neupan.configuration import to_device 
+from neupan.configuration import to_device, np_to_tensor
 from neupan.util import gen_inequal_from_vertex
 
 class robot:
@@ -40,76 +41,45 @@ class robot:
         wheelbase: Optional[float] = None,
         length: Optional[float] = None,
         width: Optional[float] = None,
-        shape: Optional[str] = None,
-        base_square: list[list[float]] = None, 
+        mosaic_unit_vertices: Optional[Union[list[list[float]], np.ndarray]] = None, 
         **kwargs,
     ):
         
         if kinematics is None:
             raise ValueError("kinematics is required")
 
-        self.shape = shape
-        # mosaic special-case metadata
-        self.is_mosaic: bool = False
-        self.mosaic_translations: list[np.ndarray] = []  # list of (2,1) translations from base to each extra polygon
-        # use num_of_polygons to represent number of parts even for mosaic
-        
-        if self.shape == "mosaic":
-            self.is_mosaic = True
-            if base_square is None:
-                raise ValueError("base_square is required for mosaic shape")
-            self.base_square_vertices = np.array(base_square).T
-        
+        self.shape = None
+        self.is_mosaic = False
         self.is_multipolygon = is_vertices_multipolygon(vertices)
+        
         if not self.is_multipolygon:
             self.num_of_polygons = 1
             self.vertices = self.cal_vertices(vertices, length, width, wheelbase)
             self.G, self.h = gen_inequal_from_vertex(self.vertices)
         else:
-            # multipolygon path
-            if self.is_mosaic:
-                # Special handling: use only the first polygon to build G/h, keep translations of others
-                self.is_mosaic = True
-                self.vertices_list = self.cal_vertices_from_multipolygon(vertices, wheelbase)
-                self.num_of_polygons = len(self.vertices_list)
-                # base polygon
-                # self.vertices = self.base_square[0]
-                self.G, self.h = gen_inequal_from_vertex(self.base_square_vertices)
-                # compute translations from base to other parts (centroid differences)
-                base_center = np.mean(self.base_square_vertices, axis=1, keepdims=True)
-                # collect as simple python lists first, then convert to device tensors
-                _trans_list = []
-                _ratio_list = []
-                unit_square = self.base_square_vertices
-                unit_square_side = np.linalg.norm(unit_square[:, 1] - unit_square[:, 0])
-                # compute per-part translation (centroid - base_center) and scale ratio
-                for i in range(self.num_of_polygons):
-                    vi = self.vertices_list[i]
-                    ci = np.mean(vi, axis=1, keepdims=True)
-                    # (2,1) -> (2,) numpy then to torch later
-                    trans_np = (ci - base_center).reshape(2,)
-                    _trans_list.append(trans_np)
-                    # ratio scalar
-                    square_side = np.linalg.norm(vi[:, 1] - vi[:, 0])
-                    _ratio_list.append(float(square_side / unit_square_side))
+            self.vertices_list = self.cal_vertices_from_multipolygon(vertices, wheelbase)
+            self.num_of_polygons = len(self.vertices_list)
+                       
+            if mosaic_unit_vertices is not None:
+                self.mosaic_unit_vertices = np.asarray(mosaic_unit_vertices).T
+                self.G, self.h = gen_inequal_from_vertex(self.mosaic_unit_vertices)
+                # mosaic unit square
+                # TODO: check the unit_vertices and vertices_list are all squares
+                unit_square_center = np.mean(self.mosaic_unit_vertices, axis=1, keepdims=True)
+                unit_square_side = np.linalg.norm(self.mosaic_unit_vertices[:, 1] - self.mosaic_unit_vertices[:, 0])
+                
+                square_vertices = np.stack(self.vertices_list, axis=0)
+                square_center = np.mean(square_vertices, axis=2)
+                trans_np = square_center - unit_square_center.ravel()
+                square_sides = np.linalg.norm(square_vertices[:, :, 1] - square_vertices[:, :, 0], axis=1)
+                ratios_np = square_sides / unit_square_side
 
-                # Convert to torch tensors in the desired shapes so downstream code (PAN)
-                # can use them directly without additional normalization helpers.
-                # mosaic_translations: (P,2), mosaic_ratios: (P,)
-                if len(_trans_list) > 0:
-                    self.mosaic_translations = to_device(torch.from_numpy(np.vstack(_trans_list)).float())
-                else:
-                    self.mosaic_translations = to_device(torch.empty((0, 2), dtype=torch.float32))
+                self.mosaic_translations = np_to_tensor(trans_np) # (P, 2)
+                self.mosaic_ratios = np_to_tensor(ratios_np) # (P, 1)
 
-                if len(_ratio_list) > 0:
-                    self.mosaic_ratios = to_device(torch.tensor(_ratio_list, dtype=torch.float32)).flatten()
-                else:
-                    self.mosaic_ratios = to_device(torch.empty((0,), dtype=torch.float32))
-
-                # treat downstream as single polygon (we keep num_of_polygons for reference)
-                self.is_multipolygon = False
+                self.shape = "mosaic"
+                self.is_mosaic = TRUE
             else:
-                # original multipolygon behavior
                 self.vertices_list = self.cal_vertices_from_multipolygon(vertices, wheelbase)
                 self.num_of_polygons = len(vertices)
                 self.G_list = []
@@ -122,8 +92,7 @@ class robot:
         self.T = receding
         self.dt = step_time
         self.L = wheelbase
-        # print(f"number of polygons: {self.num_of_polygons}")
-        # print(f"mosaic: {self.is_mosaic}, multipolygon: {self.is_multipolygon}")
+
         self.kinematics = kinematics
         self.max_speed = np.c_[max_speed] if isinstance(max_speed, list) else max_speed
         self.max_acce = np.c_[max_acce] if isinstance(max_acce, list) else max_acce
@@ -172,6 +141,7 @@ class robot:
         self.para_gamma_a = cp.Parameter((3, self.T+1), name='para_gamma_a') 
         self.para_gamma_b = cp.Parameter((self.T,), name='para_gamma_b')
         self.para_actual_vel = cp.Parameter((2, 1), name='para_actual_vel')
+
         self.para_A_list = [ cp.Parameter((3, 3), name='para_A_'+str(t)) for t in range(self.T)]
         self.para_B_list = [ cp.Parameter((3, 2), name='para_B_'+str(t)) for t in range(self.T)]
         self.para_C_list = [ cp.Parameter((3, 1), name='para_C_'+str(t)) for t in range(self.T)]
@@ -294,15 +264,17 @@ class robot:
         constraints += [ cp.abs(self.indep_u) <= self.speed_bound]
         constraints += [ self.indep_s[:, 0:1] == self.para_s[:, 0:1] ]
         constraints += [ cp.abs(self.indep_u[:, 0:1] - self.para_actual_vel[:, 0:1]) <= self.acce_bound ]
-        # constraints += [ cp.abs(self.indep_u[:, 0:1] - self.para_actual_vel[:, 0:1]) <= 99]
+
         return constraints
     
 
     def generate_state_parameter_value(self, nom_s, nom_u, qs_ref_s, pu_ref_us, actual_vel):
+
         if actual_vel is None:
             state_value_list = [nom_s, qs_ref_s, pu_ref_us, nom_u[:, 0:1]]
         else:
             state_value_list = [nom_s, qs_ref_s, pu_ref_us, actual_vel]
+
         tensor_A_list = []
         tensor_B_list = []
         tensor_C_list = []

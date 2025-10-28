@@ -44,17 +44,12 @@ def time_it(name="Function"):
             result = func(self, *args, **kwargs)
             end = time.time()
             wrapper.func_count += 1
-            # record last and cumulative elapsed times for external inspection
-            wrapper.last_elapsed = end - start
-            wrapper.total_time += wrapper.last_elapsed
             if configuration.time_print:
                 print(f"{name} execute time {(end - start):.6f} seconds")
             return result
 
         wrapper.count = 0
         wrapper.func_count = 0
-        wrapper.last_elapsed = 0.0
-        wrapper.total_time = 0.0
         return wrapper
 
     return decorator
@@ -189,7 +184,6 @@ def gen_inequal_from_vertex(vertex: np.ndarray) -> tuple[np.ndarray, np.ndarray]
 
     G = np.zeros((num, 2))
     h = np.zeros((num, 1))
-    # n_norm = np.linalg.norm(n)
 
     for i in range(num):
         if i + 1 < num:
@@ -205,13 +199,12 @@ def gen_inequal_from_vertex(vertex: np.ndarray) -> tuple[np.ndarray, np.ndarray]
         b = -diff[0]
         c = a * pre_point[0] + b * pre_point[1]
 
-        # --- minimal addition: normalize (a, b, c) by ||(a,b)|| ---
-        norm_ab = np.hypot(a, b)  # sqrt(a^2 + b^2), stable
+        # normalize
+        norm_ab = np.hypot(a, b)
         if norm_ab > 0:
             a /= norm_ab
             b /= norm_ab
             c /= norm_ab
-            # print("Normalized (a, b, c) by ||(a,b)||")
         G[i, 0] = a
         G[i, 1] = b
         h[i, 0] = c

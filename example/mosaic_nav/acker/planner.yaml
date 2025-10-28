@@ -3,16 +3,14 @@ receding: 10
 step_time: 0.1
 ref_speed: 4.0
 device: 'cpu'
-time_print: False
+time_print: True
 collision_threshold: 0.1
 log_cost: False
 
 robot:
   kinematics: 'acker'
-  shape: 'mosaic'
   max_speed: [8.0, 0.55]
   max_acce: [8.0, 1.5]
-  base_square: [[-1., 1.], [1., 1.], [1., -1.], [-1., -1.]]
   vertices: [
     # scale for testing:
       # [[-3.0, 3.0], [3.0, 3.0], [3.0, -3.0], [-3.0, -3.0]],
@@ -43,6 +41,7 @@ robot:
       [[1.575, 2.025], [1.125, 2.025], [1.125, 1.575], [1.575, 1.575]],
       [[1.575, -1.125], [1.125, -1.125], [1.125, -1.575], [1.575, -1.575]]
     ]
+  mosaic_unit_vertices: [[-1., 1.], [1., 1.], [1., -1.], [-1., -1.]]
   wheelbase: 1.6
 
 ipath:
