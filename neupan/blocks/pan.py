@@ -254,6 +254,21 @@ class PAN(torch.nn.Module):
     
 
     def generate_point_flow_mosaic(self, nom_s: torch.Tensor, obs_points: torch.Tensor, point_velocities: Optional[torch.Tensor]=None):
+        
+        '''
+        Args:
+            nom_s: (3, T1)
+            obs_points: (2, N)
+
+        Parameters:
+            P: number of polygons
+
+        Returns:
+            point_flow_list: list of length P*T1, each (2, N)
+            R_list: list of length P*T1, each (2, 2)
+            obs_points_list: list of length P*T1, each (2, N)
+        '''
+        
         if not self.is_mosaic:
             raise ValueError("generate_point_flow_mosaic is only supported for mosaic robot")
         
@@ -285,14 +300,14 @@ class PAN(torch.nn.Module):
             scaled_nom_s_b, scaled_obs_b, point_vel_b
         )
 
-        # batched_pf_list: list of length T1, each (P,2,N)
+        # batched_pf_list: list of length P*T1, each (2, N)
         pf_stack = torch.stack(batched_pf_list, dim=0) # (T1, P, 2, N)
         pf_flat = pf_stack.permute(1, 0, 2, 3).reshape(P*T1, 2, -1) # (P*T1, 2, N)
         point_flow_list= list(pf_flat.unbind(0))
         
-        # obs_points_list: list of length T1, each (P,2,N)
+        # obs_points_list: list of length P*T1, each (2, N)
         obs_stack = torch.stack(batched_obs_list, dim=0) # (T1, P, 2, N)
-        obs_flat = obs_stack.permute(1, 0, 2, 3).reshape(P*T1, 2, -1) # (P, T1, 2, N)
+        obs_flat = obs_stack.permute(1, 0, 2, 3).reshape(P*T1, 2, -1) # (P*T1, 2, N)
         obs_points_list = list(obs_flat.unbind(0))
 
         # Compute R_list directly from nom_s to avoid duplicates
@@ -305,17 +320,15 @@ class PAN(torch.nn.Module):
     def generate_point_flow_batched(self, nom_s: torch.Tensor, obs_points: torch.Tensor, point_velocities: Optional[torch.Tensor]=None):
 
         '''
-        generate the point flow (robot coordinate), rotation matrix and obs points (global coordinate) list in each receding step
-
         Args:
-            nom_s: (B, 3, receding+1)
-            obs_points: (B, 2, n)
-            point_velocities: (B, 2, n), x,y vel
+            nom_s: (B, 2, T1)
+            obs_points: (B, 2, N)
+            point_velocities: (B, 2, N), x,y vel
 
         Returns:
-            point_flow_list: list of (B, 2, n)
-            R_list: list of (B, 2, 2)
-            obs_points_list: list of (B, 2, n)
+            point_flow_list: list of length T1, each (B, 2, N)
+            R_list: list of length T1, each (B, 2, 2)
+            obs_points_list: list of length T1, each (B, 2, N)
         '''
 
         if nom_s.dim() == 2:

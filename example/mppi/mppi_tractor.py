@@ -17,7 +17,7 @@ def main(
     planner_file,
 ):
     
-    env = irsim.make(env_file, save_ani=False)
+    env = irsim.make(env_file, save_ani=True)
     env.step(np.array([0, 0]))
     
     neupan_planner = neupan.init_from_yaml(planner_file)

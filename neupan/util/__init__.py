@@ -25,6 +25,8 @@ import sys
 from math import sqrt, pi, cos, sin
 import numpy as np
 import neupan
+import torch
+from functools import wraps
 
 def time_it(name="Function"):
     """
@@ -38,11 +40,14 @@ def time_it(name="Function"):
     """
 
     def decorator(func):
-        def wrapper(self, *args, **kwargs):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
             wrapper.count += 1
-            start = time.time()
-            result = func(self, *args, **kwargs)
-            end = time.time()
+            torch.cuda.synchronize() if torch.cuda.is_available() else None
+            start = time.perf_counter()
+            result = func(*args, **kwargs)
+            torch.cuda.synchronize() if torch.cuda.is_available() else None
+            end = time.perf_counter()
             wrapper.func_count += 1
             if configuration.time_print:
                 print(f"{name} execute time {(end - start):.6f} seconds")
