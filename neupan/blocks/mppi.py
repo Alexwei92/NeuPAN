@@ -449,8 +449,8 @@ class MPPIHandler:
 
         p0_b = R.transpose(1, 2) @ (obs_points_b - trans_b)  # (N, 2, M)
 
-        point_flow_list = [p0_b[n] for n in range(N)]
-        R_list = [R[n] for n in range(N)]
+        point_flow_list = list(p0_b.unbind(0))
+        R_list = list(R.unbind(0))
 
         return point_flow_list, R_list
 

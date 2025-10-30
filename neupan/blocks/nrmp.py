@@ -52,14 +52,19 @@ class NRMP(torch.nn.Module):
         self.robot = robot
         
         self.is_multipolygon = robot.is_multipolygon
+        self.is_mosaic = robot.is_mosaic
         self.num_of_polygons = robot.num_of_polygons
-        if self.is_multipolygon:
+        
+        if self.is_multipolygon and not self.is_mosaic:
             self.G_list = [np_to_tensor(G) for G in robot.G_list]
             self.h_list = [np_to_tensor(h) for h in robot.h_list]
         else:
             self.G = np_to_tensor(robot.G)
-            self.h = np_to_tensor(robot.h)
-
+            self.h = np_to_tensor(robot.h)   
+            
+            if self.is_mosaic:
+                self.mosaic_ratios = robot.mosaic_ratios
+        
         self.max_num = nrmp_max_num
         self.no_obs = False if nrmp_max_num > 0 else True
 
@@ -128,7 +133,7 @@ class NRMP(torch.nn.Module):
 
                 sorted_ids_list = []
                 for i in range(self.T + 1):
-                    distance_per_poly_slices = [distance_list[poly_id][i][:min(self.max_num, len(distance_list[poly_id][i]))] 
+                    distance_per_poly_slices = [distance_list[poly_id][i][:min(self.max_num, distance_list[poly_id][i].numel())] 
                                                 for poly_id in range(self.num_of_polygons)]
                     all_distances = torch.cat(distance_per_poly_slices, dim=0)
                     
@@ -269,7 +274,11 @@ class NRMP(torch.nn.Module):
                                 torch.bmm(lam.T.unsqueeze(1), point.T.unsqueeze(2))
                             ).squeeze(1)
 
-                            fb = temp + mu.T @ self.h_list[poly_id]
+                            if self.is_mosaic:
+                                ratio = self.mosaic_ratios[poly_id]
+                                fb = temp + mu.T @ self.h * ratio
+                            else:
+                                fb = temp + mu.T @ self.h_list[poly_id]
 
                             fa_list[t][i, :] = fa[:, :]
                             fb_list[t][i, :] = fb[:, :]

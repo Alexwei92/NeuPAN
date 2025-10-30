@@ -58,13 +58,14 @@ class DUNE(torch.nn.Module):
 
         Args:
             point_flow: point flow under the robot coordinate, list of (state_dim, num_points); list length: T+1
-            R_list: list of Rotation matrix, list of (2, 2), used to generate the lam from mu; list length: T
-            obstacle_points: tensor of shape (2, num_points), global coordinate; 
+            R_list: list of Rotation matrix, list of (2, 2), used to generate the lam from mu; list length: T+1
+            obstacle_points_list: list of obstacle points, list of (2, num_points), global coordinate; list length: T+1
 
         Returns: 
             lam_list: list of lam tensor, each element is a tensor of shape (state_dim, num_points); list length: T+1
             mu_list: list of mu tensor, each element is a tensor of shape (edge_number, num_points); list length: T+1
-            sort_point_list: list of point tensor, each element is a tensor of shape (state_dim, num_points); list length: T+1; 
+            sort_point_list: list of point tensor, each element is a tensor of shape (state_dim, num_points); list length: T+1
+            distance_list: list of distance tensor, each element is a tensor of shape (num_points,); list length: T+1;
         '''
 
         mu_list, lam_list, sort_point_list, distance_list = [], [], [], []
@@ -105,17 +106,18 @@ class DUNE(torch.nn.Module):
     def batch_forward(self, point_flow: list[torch.Tensor], R_list: list[torch.Tensor], obs_points_list: list[torch.Tensor]=[]) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
 
         '''
-        map point flow to the latent distance features: lam, mu
+        batched operation of mapping point flow to the latent distance features: lam, mu
 
         Args:
-            point_flow: point flow under the robot coordinate, list of (state_dim, num_points); list length: T+1
-            R_list: list of Rotation matrix, list of (2, 2), used to generate the lam from mu; list length: T
-            obstacle_points: tensor of shape (2, num_points), global coordinate; 
+            point_flow: point flow under the robot coordinate, list of (state_dim, num_points); list length: N
+            R_list: list of Rotation matrix, list of (2, 2), used to generate the lam from mu; list length: N
+            obstacle_points_list: list of obstacle points, list of (2, num_points), global coordinate; list length: N
 
         Returns: 
-            lam_list: list of lam tensor, each element is a tensor of shape (state_dim, num_points); list length: T+1
-            mu_list: list of mu tensor, each element is a tensor of shape (edge_number, num_points); list length: T+1
-            sort_point_list: list of point tensor, each element is a tensor of shape (state_dim, num_points); list length: T+1; 
+            lam_list: list of lam tensor, each element is a tensor of shape (state_dim, num_points); list length: N
+            mu_list: list of mu tensor, each element is a tensor of shape (edge_number, num_points); list length: N
+            sort_point_list: list of point tensor, each element is a tensor of shape (state_dim, num_points); list length: N
+            distance_list: list of distance tensor, each element is a tensor of shape (num_points,); list length: N;
         '''
        
         N = len(point_flow)

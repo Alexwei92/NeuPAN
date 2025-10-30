@@ -199,6 +199,12 @@ def gen_inequal_from_vertex(vertex: np.ndarray) -> tuple[np.ndarray, np.ndarray]
         b = -diff[0]
         c = a * pre_point[0] + b * pre_point[1]
 
+        # normalize
+        norm_ab = np.hypot(a, b)
+        if norm_ab > 0:
+            a /= norm_ab
+            b /= norm_ab
+            c /= norm_ab
         G[i, 0] = a
         G[i, 1] = b
         h[i, 0] = c
