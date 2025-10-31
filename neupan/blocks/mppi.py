@@ -8,12 +8,10 @@ from neupan.pytorch_mppi import MPPI
 from neupan.blocks import PAN
 from neupan.util import downsample_decimation, time_it
 
-import time
-
 
 @dataclass
 class RobotParams:
-    kinematics: str = 'acker'
+    kinematics: str = "acker"
     nx: int = 5
     dt: float = 0.1
 
@@ -44,10 +42,10 @@ class MPPIHandler:
     def __init__(
         self,
         robot,
-        receding: int = 20,
+        receding: int = 30,
         step_time: float = 0.1,
         ref_speed: float = 4.0,
-        num_samples: int = 300,
+        num_samples: int = 400,
         noise_sigma: list = [0.5, 0.5],
         lambda_: float = 0.1,
         max_obs_num: int = 10,
@@ -86,12 +84,20 @@ class MPPIHandler:
             is_mosaic=robot.is_mosaic,
         )
 
-        self.robot_params.max_u = self.robot_params.max_u.to(dtype=self.dtype, device=self.device)
-        self.robot_params.max_du = self.robot_params.max_du.to(dtype=self.dtype, device=self.device)
-        
+        self.robot_params.max_u = self.robot_params.max_u.to(
+            dtype=self.dtype, device=self.device
+        )
+        self.robot_params.max_du = self.robot_params.max_du.to(
+            dtype=self.dtype, device=self.device
+        )
+
         if robot.is_mosaic:
-            self.robot_params.mosaic_ratios = robot.mosaic_ratios.to(dtype=self.dtype, device=self.device)
-            self.robot_params.mosaic_translations = robot.mosaic_translations.to(dtype=self.dtype, device=self.device)
+            self.robot_params.mosaic_ratios = robot.mosaic_ratios.to(
+                dtype=self.dtype, device=self.device
+            )
+            self.robot_params.mosaic_translations = robot.mosaic_translations.to(
+                dtype=self.dtype, device=self.device
+            )
 
         # PAN
         self.pan = None
@@ -107,14 +113,12 @@ class MPPIHandler:
             "r_gate": 10.0,
             "pos_tol": 0.2,
             "yaw_tol": 0.1,
-            "R_goal": 200.0,
             "d_safe": 2.0,
             "beta": 1.0,
         }
 
     def set_pan(self, pan: PAN):
         assert self.robot_params.is_multipolygon == pan.is_multipolygon
-
         self.pan = pan
 
     def update_goal(self, goal: Union[torch.Tensor, list, np.ndarray]):
@@ -214,9 +218,6 @@ class MPPIHandler:
 
         return new_state
 
-    def terminal_state_cost(self, state: torch.Tensor, action: torch.Tensor):
-        pass
-
     def running_cost(
         self,
         state: torch.Tensor,
@@ -298,36 +299,23 @@ class MPPIHandler:
         # --------- collision cost ---------
         collision_cost = torch.zeros_like(control_cost)
         if self.obs_points is not None:
-            distance_list = self.pan_forward(
+            distance_b = self.pan_forward(
                 state.view(M * K * T, nx)[:, :3].T, self.obs_points
             )
 
-            if self.robot_params.is_multipolygon:
-                all_distances = []
-                for poly_id in range(self.robot_params.num_of_polygons):
-                    distances_per_poly = torch.cat(distance_list[poly_id], dim=0).view(
-                        M, K, T, -1
-                    )
-                    all_distances.append(
-                        distances_per_poly[
-                            ..., : min(self.max_obs_num, distances_per_poly.shape[-1])
-                        ]
-                    )
-                all_distances = torch.cat(all_distances, dim=-1)
+            B = self.robot_params.num_of_polygons
+            P = self.obs_points.shape[1]
+            all_distances = distance_b.view(M, K, T, B, P)
+            all_distances = all_distances.reshape(M, K, T, B*P)
 
-                if self.robot_params.num_of_polygons > 1:
-                    topk_distance, _ = torch.topk(
-                        all_distances,
-                        min(self.max_obs_num, all_distances.shape[-1]),
-                        dim=-1,
-                        largest=False,
-                    )  # (M, K, T, topk)
-                else:
-                    topk_distance = all_distances[
-                        ..., : min(self.max_obs_num, all_distances.shape[-1])
-                    ]
+            if B > 1:
+                topk_distance, _ = torch.topk(
+                    all_distances,
+                    min(self.max_obs_num, all_distances.shape[-1]),
+                    dim=-1,
+                    largest=False,
+                )  # (M, K, T, topk)
             else:
-                all_distances = torch.cat(distance_list, dim=0).view(M, K, T, -1)
                 topk_distance = all_distances[
                     ..., : min(self.max_obs_num, all_distances.shape[-1])
                 ]  # (M, K, T, topk)
@@ -341,7 +329,9 @@ class MPPIHandler:
         # near = (torch.sqrt(r2 + eps) < r_gate).float()
 
         # v_min_near = 0.07 * self.ref_speed
-        # keep_move_cost = near * torch.nn.functional.relu(v_min_near - state[..., 3]) # (M, K, T)
+        # keep_move_cost = near * torch.nn.functional.relu(
+        #     v_min_near - state[..., 3]
+        # )  # (M, K, T)
         # yaw_rate = state[..., 3] * torch.tan(state[..., 4]) / self.robot_params.L
         # align_turn_cost = -(yaw_rate**2) * (1.0 + 4.0 * near)
 
@@ -369,13 +359,17 @@ class MPPIHandler:
         w_speed_toward = 0.35
         w_ref_speed = 0.1
         w_collision = 1.0
-        w_term_funnel = 0.5
-        # w_move_near = 0.3
-        # w_align_turn = 0.3
+        w_term_funnel = 1.0
+        w_move_near = 0.3
+        w_align_turn = 0.3
 
-        # w_yaw  = w_yaw * (1.0 + 4.0*near)
-        # w_control  = w_control * (1.0 - 0.5*near)
-        # w_progress = w_progress * (1.0 + 2.0*((r2[...,0] - r2[...,-1] < 0.05*(map_scale**2)).float().unsqueeze(-1)))  # anti-stuck
+        # w_yaw = w_yaw * (1.0 + 4.0 * near)
+        # w_control = w_control * (1.0 - 0.5 * near)
+        # w_progress = w_progress * (
+        #     1.0
+        #     + 2.0
+        #     * ((r2[..., 0] - r2[..., -1] < 0.05 * (map_scale**2)).float().unsqueeze(-1))
+        # )  # anti-stuck
 
         per_step = (
             w_control * control_cost
@@ -410,81 +404,91 @@ class MPPIHandler:
             step_dependent_dynamics=False,
         )
 
-    def dune_batch_forward(self, nom_s, obs_points):
+    def pan_forward(
+        self, nom_s: torch.Tensor, obs_points: Optional[torch.Tensor] = None
+    ):
+        """
+        Args:
+            nom_s: tensor of shape (3, N)
+            obs_points: tensor of shape (2, P) or None
+
+        Returns:
+            distance_b: tensor of shape (N, P) or (N, B, P) or None
+            (B - number of polygons)
+        """
+        if obs_points is None:
+            return None
+
+        distance_b = self.dune_batch_forward(nom_s, obs_points)
+        return distance_b
+
+    def dune_batch_forward(
+        self, nom_s: torch.Tensor, obs_points: Optional[torch.Tensor] = None
+    ):
+        """
+        Args:
+            nom_s: tensor of shape (3, N)
+            obs_points: tensor of shape (2, P)
+
+        Returns:
+            distance_b: tensor of shape (N, B, P)
+            (B - number of polygons)
+        """
+        if obs_points is None:
+            return None
+
+        point_flow_b, R_b, obs_points_b = self.generate_point_flow(
+            nom_s, obs_points
+        )
+
+        if self.robot_params.is_multipolygon and not self.robot_params.is_mosaic:
+            distance_b_list = []
+            for i, dune_layer in enumerate(self.pan.dune_layer_list):
+                distance_b_i = dune_layer.batch_forward_fast(
+                    point_flow_b, R_b, obs_points_b
+                ) # (N, P)
+                distance_b_list.append(distance_b_i)
+            distance_b = torch.stack(distance_b_list, dim=1) # (N, B, P)
+        else:
+            distance_b = self.pan.dune_layer.batch_forward_fast(
+                point_flow_b, R_b, obs_points_b
+            ) # (N*?, P)
+
+            if self.robot_params.is_mosaic:
+                N = nom_s.shape[1]
+                B = self.robot_params.num_of_polygons
+                ratios = self.robot_params.mosaic_ratios # (B, 1)
+                distance_b = distance_b.reshape(N, B, -1) # (N, B, P)
+                distance_b = distance_b * ratios.view(1, B, 1) # (N, B, P)
+            else:
+                distance_b = distance_b.unsqueeze(1) # (N, 1, P)
+
+        return distance_b
+
+    def generate_point_flow(self, nom_s: torch.Tensor, obs_points: torch.Tensor):
         """
         Args:
             nom_s: (3, N)
             obs_points: (2, P)
 
         Returns:
-            distance_list: list of all distances
+            point_flow_b: (N, 2, P) or (N*B, 2, P)
+            R_b: (N, 2, 2) or (N*B, 2, 2)
+            obs_points_b: (N, 2, P) or (N*B, 2, P)
+
         """
-        if obs_points is not None:
-            point_flow_list, R_list, obs_points_list = self.generate_point_flow(
+        if obs_points.shape[1] > self.pan.dune_max_num:
+            obs_points = downsample_decimation(obs_points, self.pan.dune_max_num)
+
+        if self.robot_params.is_mosaic:
+            point_flow_b, R_b, obs_points_b = self.generate_point_flow_mosaic(
                 nom_s, obs_points
             )
-            
-            if self.robot_params.is_multipolygon and not self.robot_params.is_mosaic:
-                distance_list = []
-                for i, dune_layer in enumerate(self.pan.dune_layer_list):
-                    _, _, _, distance_list_i = dune_layer.batch_forward(
-                        point_flow_list, R_list, obs_points_list
-                    )
-
-                    distance_list.append(distance_list_i)
-            else:
-                _, _, _, distance_list = self.pan.dune_layer.batch_forward(
-                    point_flow_list, R_list, obs_points_list
-                )
-
-                if self.robot_params.is_mosaic:
-                    T1 = nom_s.shape[1]
-                    P = self.robot_params.num_of_polygons
-                    ratios = self.robot_params.mosaic_ratios
-                    distance_list = [
-                        [d * ratios[i] for d in distance_list[i * T1 : (i + 1) * T1]]
-                        for i in range(P)
-                    ]
-
         else:
-            distance_list = []
+            point_flow_b, R_b = self.batch_state_transform(nom_s, obs_points) # (N, 2, P), (N, 2, 2)
+            obs_points_b = obs_points.unsqueeze(0).expand(nom_s.shape[1], -1, -1) # (N, 2, P)
 
-        return distance_list
-
-    def pan_forward(self, nom_s, obs_points):
-        """
-        Args:
-            nom_s: (3, N)
-            obs_points: (2, P)
-
-        Returns:
-            distance_list: list of length T1, each (M, K, topk)
-        """
-
-        if not torch.is_tensor(nom_s):
-            nom_s = self.np_to_tensor(nom_s)
-
-        if (obs_points is not None) and (not torch.is_tensor(obs_points)):
-            obs_points = self.np_to_tensor(obs_points)
-
-        distance_list = self.dune_batch_forward(nom_s, obs_points)
-
-        return distance_list
-
-    def point_state_transform(self, state: torch.Tensor, obs_points: torch.Tensor):
-        state = state.reshape((3, 1))
-        trans = state[0:2]
-        theta = state[2, 0]
-        R = torch.tensor(
-            [
-                [torch.cos(theta), -torch.sin(theta)],
-                [torch.sin(theta), torch.cos(theta)],
-            ]
-        ).to(self.device)
-
-        p0 = R.T @ (obs_points - trans)
-
-        return p0, R
+        return point_flow_b, R_b, obs_points_b
 
     def batch_state_transform(self, states: torch.Tensor, obs_points: torch.Tensor):
         """
@@ -493,8 +497,8 @@ class MPPIHandler:
             obs_points: (2, P)
 
         Returns:
-            point_flow_list: list of length N, each (2, P)
-            R_list: list of length N, each (2, 2)
+            point_flow_b: (N, 2, P)
+            R_b: (N, 2, 2)
         """
         N = states.shape[1]
 
@@ -511,148 +515,94 @@ class MPPIHandler:
 
         p0_b = R.transpose(1, 2) @ (obs_points_b - trans_b)  # (N, 2, P)
 
-        point_flow_list = list(p0_b.unbind(0))
-        R_list = list(R.unbind(0))
+        point_flow_b = p0_b # (N, 2, P)
+        R_b = R # (N, 2, 2)
 
-        return point_flow_list, R_list
+        return point_flow_b, R_b
 
-    def generate_point_flow(self, nom_s: torch.Tensor, obs_points: torch.Tensor):
+    def generate_point_flow_mosaic(self, nom_s: torch.Tensor, obs_points: torch.Tensor):
         """
         Args:
             nom_s: (3, N)
             obs_points: (2, P)
 
         Returns:
-            point_flow_list: list of length N, each (2, N)
-            R_list: list of length N, each (2, 2)
-            obs_points_list: list of length N, each (2, P)
-
+            point_flow_b: (N*B, 2, P)
+            R_b: (N*B, 2, 2)
+            obs_points_b: (N*B, 2, P)
+            (B - number of polygons)
         """
-        if obs_points is None:
-            return [], [], []
+        ratios = self.robot_params.mosaic_ratios # (B, 1)
+        translations = self.robot_params.mosaic_translations # (B, 2)
 
-        if obs_points.shape[1] > self.pan.dune_max_num:
-            obs_points = downsample_decimation(obs_points, self.pan.dune_max_num)
-
-        if self.robot_params.is_mosaic:
-            point_flow_list, R_list, obs_points_list = self.generate_point_flow_mosaic(
-                nom_s, obs_points
-            )
-        else:
-            point_flow_list, R_list = self.batch_state_transform(nom_s, obs_points)
-            obs_points_list = [obs_points] * nom_s.shape[1]
-
-        return point_flow_list, R_list, obs_points_list
-
-    def generate_point_flow_mosaic(self, nom_s: torch.Tensor, obs_points: torch.Tensor):
-        """
-        Args:
-            nom_s: (3, T1)
-            obs_points: (2, N)
-            
-        Parameters:
-            P: number of polygons
-
-        Returns:
-            point_flow_list: list of length P*T1, each (2, N)
-            R_list: list of length P*T1, each (2, 2)
-            obs_points_list: list of length P*T1, each (2, N)
-        """
-        ratios = self.robot_params.mosaic_ratios
-        translations = self.robot_params.mosaic_translations
-
-        P = self.robot_params.num_of_polygons
-        T1 = nom_s.shape[1]
+        B = self.robot_params.num_of_polygons
+        N = nom_s.shape[1]
+        P = obs_points.shape[1]
 
         # translate then scale nom_s per poly
-        nom_s_b = nom_s.unsqueeze(0).expand(P, -1, -1).clone()  # (P, 3, T1)
-        nom_s_b[:, :2, :] += translations.view(P, 2, 1)
-        scaled_nom_s_b = nom_s_b.clone()  # (P, 3, T1)
-        scaled_nom_s_b[:, :2, :] /= ratios.view(P, 1, 1)
+        nom_s_b = nom_s.unsqueeze(0).expand(B, -1, -1).clone()  # (B, 3, N)
+        nom_s_b[:, :2, :] += translations.view(B, 2, 1)
+        scaled_nom_s_b = nom_s_b.clone()  # (B, 3, N)
+        scaled_nom_s_b[:, :2, :] /= ratios.view(B, 1, 1)
 
         # scale obstacles + velocities per poly (stay in global frame, only scale xy)
-        scaled_obs_b = obs_points.unsqueeze(0).expand(P, -1, -1).clone()  # (P, 2, N)
-        scaled_obs_b[:, :2, :] /= ratios.view(P, 1, 1)
+        scaled_obs_b = obs_points.unsqueeze(0).expand(B, -1, -1).clone()  # (B, 2, N)
+        scaled_obs_b[:, :2, :] /= ratios.view(B, 1, 1)
 
         # Batch generate point flows for all polys at once
-        batched_pf_list, _, batched_obs_list = self.generate_point_flow_batched(
+        point_flow_b, _, obs_points_b = self.generate_point_flow_batched(
             scaled_nom_s_b, scaled_obs_b
-        )
+        ) # (N, B, 2, P)
 
-        # batched_pf_list: list of length P*T1, each (2, N)
-        pf_stack = torch.stack(batched_pf_list, dim=0)  # (T1, P, 2, N)
-        pf_flat = pf_stack.permute(1, 0, 2, 3).reshape(P * T1, 2, -1)  # (P*T1, 2, N)
-        point_flow_list = list(pf_flat.unbind(0))
+        point_flow_b = point_flow_b.reshape(N * B, 2, P)
+        obs_points_b = obs_points_b.reshape(N * B, 2, P)
 
-        # obs_points_list: list of length P*T1, each (2, N)
-        obs_stack = torch.stack(batched_obs_list, dim=0)  # (T1, P, 2, N)
-        obs_flat = obs_stack.permute(1, 0, 2, 3).reshape(P * T1, 2, -1)  # (P*T1, 2, N)
-        obs_points_list = list(obs_flat.unbind(0))
+        # Compute R_b directly from nom_s to avoid duplicates
+        R_base_b = self.compute_R_b(nom_s) # (N, 2, 2)
+        R_b = R_base_b.unsqueeze(1).expand(N, B, -1, -1).reshape(N * B, 2, 2)
 
-        # Compute R_list directly from nom_s to avoid duplicates
-        R_base_list = self.compute_R_list(nom_s)
-        R_list = R_base_list * P
-
-        return point_flow_list, R_list, obs_points_list
+        return point_flow_b, R_b, obs_points_b
 
     def generate_point_flow_batched(
         self, nom_s: torch.Tensor, obs_points: torch.Tensor
     ):
         """
         Args:
-            nom_s: (B, 2, T1)
-            obs_points: (B, 2, N)
+            nom_s: (B, 2, N)
+            obs_points: (B, 2, P)
 
         Returns:
-            point_flow_list: list of length T1, each (B, 2, N)
-            R_list: list of length T1, each (B, 2, 2)
-            obs_points_list: list of length T1, each (B, 2, N)
+            point_flow_b: (N, B, 2, P)
+            R_b: (N, B, 2, 2)
+            obs_points_b: (N, B, 2, P)
         """
-        if nom_s.dim() == 2:
-            nom_s_b = nom_s.unsqueeze(0)
-        elif nom_s.dim() == 3:
-            nom_s_b = nom_s
-        else:
-            raise ValueError("nom_s must have ndim 2 or 3")
+        N = nom_s.shape[-1]
 
-        if obs_points.dim() == 2:
-            obs_b = obs_points.unsqueeze(0)
-        elif obs_points.dim() == 3:
-            obs_b = obs_points
-        else:
-            raise ValueError("obs_points must have ndim 2 or 3")
+        nom_perm = nom_s.permute(2, 0, 1).contiguous()  # (N, B, 3)
+        trans = nom_perm[..., :2].unsqueeze(-1)  # (N, B, 2, 1)
+        theta = nom_perm[..., 2]  # (N, B)
 
-        T1 = nom_s.shape[-1]
-
-        nom_perm = nom_s_b.permute(2, 0, 1).contiguous()  # (T1, B, 3)
-        trans = nom_perm[:, :, 0:2].unsqueeze(-1)  # (T1, B, 2, 1)
-        theta = nom_perm[:, :, 2]  # (T1, B)
-
-        c, s = torch.cos(theta), torch.sin(theta)
-        R_batched = torch.stack(
+        c, s = torch.cos(theta), torch.sin(theta) # (N, B)
+        R_b = torch.stack(
             [torch.stack([c, -s], dim=-1), torch.stack([s, c], dim=-1)], dim=-2
-        )  # (T1, B, 2, 2)
+        )  # (N, B, 2, 2)
 
-        receding_obs = obs_b.unsqueeze(0).expand(T1, -1, -1, -1)  # (T1, B, 2, N)
-        p0_batched = R_batched.transpose(-1, -2) @ (
-            receding_obs - trans
-        )  # (T1, B, 2, N)
+        obs_points_b = obs_points.unsqueeze(0).expand(N, -1, -1, -1)  # (N, B, 2, P)
+        point_flow_b = R_b.transpose(-1, -2) @ (
+            obs_points_b - trans
+        )  # (N, B, 2, P)
 
-        point_flow_list = list(p0_batched.unbind(0))
-        R_list = list(R_batched.unbind(0))
-        obs_points_list = list(receding_obs.unbind(0))
+        return point_flow_b, R_b, obs_points_b
 
-        return point_flow_list, R_list, obs_points_list
-
-    def compute_R_list(self, nom_s: torch.Tensor):
+    def compute_R_b(self, nom_s: torch.Tensor):
         """
-        Compute rotation matrices R_list from nom_s
+        Compute rotation matrices R_b from nom_s
 
         Args:
-            nom_s: (B, 3, T1) or (3, T1)
+            nom_s: (B, 3, N) or (3, N)
 
         Returns:
-            R_list: list length T1 of (B, 2, 2) or (2, 2)
+            R_b: (N, B, 2, 2) or (N, 2, 2)
         """
         if nom_s.dim() == 2:
             nom_s_b = nom_s.unsqueeze(0)
@@ -661,39 +611,50 @@ class MPPIHandler:
         else:
             raise ValueError("nom_s must have ndim 2 or 3")
 
-        nom_perm = nom_s_b.permute(2, 0, 1).contiguous()  # (T1, B, 3)
-        theta = nom_perm[:, :, 2]  # (T1, B)
+        nom_perm = nom_s_b.permute(2, 0, 1) # (N, B, 3)
+        theta = nom_perm[..., 2]  # (N, B)
 
         c, s = torch.cos(theta), torch.sin(theta)
-        R_batched = torch.stack(
+        R_b = torch.stack(
             [torch.stack([c, -s], dim=-1), torch.stack([s, c], dim=-1)], dim=-2
-        )  # (T1, B, 2, 2)
+        )  # (N, B, 2, 2)
 
-        R_list = list(R_batched.unbind(0))
         if nom_s.dim() == 2:
-            R_list = [R.squeeze(0) for R in R_list]
+            R_b = R_b.squeeze(1) # (N, 2, 2)
 
-        return R_list
+        return R_b
 
     @time_it("- mppi command")
     def command(
         self,
         state: Union[torch.Tensor, list, np.ndarray],
-        obs_points: Optional[np.ndarray] = None,
+        obs_points: Optional[Union[torch.Tensor, list, np.ndarray]] = None,
     ):
         if isinstance(state, list):
             state = torch.tensor(state, dtype=self.dtype, device=self.device)
         elif isinstance(state, np.ndarray):
             state = self.np_to_tensor(state)
         elif isinstance(state, torch.Tensor):
-            state = state.type(self.dtype).to(self.device)
+            state = state.to(dtype=self.dtype, device=self.device)
         else:
             raise ValueError(f"State must be a list, numpy array, or torch tensor")
 
+        if obs_points is not None:
+            if isinstance(obs_points, list):
+                obs_points = torch.tensor(
+                    obs_points, dtype=self.dtype, device=self.device
+                )
+            elif isinstance(obs_points, np.ndarray):
+                obs_points = self.np_to_tensor(obs_points)
+            elif isinstance(obs_points, torch.Tensor):
+                obs_points = obs_points.to(dtype=self.dtype, device=self.device)
+            else:
+                raise ValueError(
+                    f"obs_points must be a list, numpy array, or torch tensor"
+                )
+
         self.state = state
-        self.obs_points = (
-            self.np_to_tensor(obs_points) if obs_points is not None else None
-        )
+        self.obs_points = obs_points
 
         with torch.no_grad():
             action = self.controller.command(state)

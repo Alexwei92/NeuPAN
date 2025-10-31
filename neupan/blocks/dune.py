@@ -184,6 +184,38 @@ class DUNE(torch.nn.Module):
         
         return mu_list, lam_list, sort_point_list, distance_list
 
+    # @time_it('- dune forward')
+    def batch_forward_fast(self, point_flow_b: torch.Tensor, R_b: torch.Tensor, obs_points_b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+
+        '''
+        Fast batched operation of mapping point flow to distance:
+
+        Args:
+            point_flow_b: point flow under the robot coordinate; (N, 2, P)
+            R_b: Rotation matrix; (N, 2, 2)
+            obstacle_points_b: obstacle points; (N, 2, P)
+
+        Returns: 
+            sorted_distance_b: sorted distance tensor; (N, P)
+        '''
+       
+        N = point_flow_b.shape[0]
+        assert N == R_b.shape[0] == obs_points_b.shape[0]
+        
+        self.obstacle_points = obs_points_b[0, ...] # current obstacle points considered in the dune at time 0
+        
+        # map the point flow to the latent distance features mu
+        with torch.inference_mode():
+            total_points = point_flow_b.permute(0, 2, 1) # (N, P, 2)
+            total_mu = self.model(total_points) # (N, P, E)
+               
+        mu_b = total_mu.permute(2, 0, 1) # (E, N, P)
+        distance_b = self.cal_objective_distance_batch(mu_b, point_flow_b) # (N, P)
+        
+        sorted_idx_b = torch.argsort(distance_b, dim=1) # (N, P)
+        sorted_distance_b = torch.gather(distance_b, 1, sorted_idx_b) # (N, P)
+
+        return sorted_distance_b
 
     def cal_objective_distance(self, mu: torch.Tensor, p0: torch.Tensor) -> torch.Tensor:
 
