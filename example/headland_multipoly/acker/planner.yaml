@@ -54,8 +54,8 @@ pan:
     # 'example/dune_train/model/acker_robot_mower/poly_0/model_5000.pth',
     # 'example/dune_train/model/acker_robot_mower/poly_1/model_5000.pth',
     # # single pruner
-    # 'example/dune_train/model/acker_robot_pruner/poly_0/model_5000.pth',
-    # 'example/dune_train/model/acker_robot_pruner/poly_1/model_5000.pth'
+    # 'example/dune_train/model/acker_robot_single_pruner/poly_0/model_5000.pth',
+    # 'example/dune_train/model/acker_robot_single_pruner/poly_1/model_5000.pth'
     # kms sprayer
     # 'example/dune_train/model/acker_robot_kms_sprayer/poly_0/model_5000.pth',
     # 'example/dune_train/model/acker_robot_kms_sprayer/poly_1/model_5000.pth',

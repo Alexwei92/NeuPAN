@@ -73,7 +73,7 @@ class neupan(torch.nn.Module):
         # initialization
         self.cur_vel_array = np.zeros((2, self.T))
         self.robot = robot(receding, step_time, **robot_kwargs)
-        # print("robot_kwargs:", robot_kwargs)
+
         self.ipath = InitialPath(
             receding, step_time, ref_speed, self.robot, **ipath_kwargs
         )
@@ -152,6 +152,7 @@ class neupan(torch.nn.Module):
 
         if self.check_stop():
             self.info["stop"] = True
+            print(f"NeuPAN stops because of minimum distance: {self.min_distance:.3f} m")
             return np.zeros((2, 1)), self.info
         else:
             self.info["stop"] = False

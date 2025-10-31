@@ -54,16 +54,17 @@ class NRMP(torch.nn.Module):
         self.is_multipolygon = robot.is_multipolygon
         self.is_mosaic = robot.is_mosaic
         self.num_of_polygons = robot.num_of_polygons
-        if self.is_multipolygon:
+        
+        if self.is_multipolygon and not self.is_mosaic:
             self.G_list = [np_to_tensor(G) for G in robot.G_list]
             self.h_list = [np_to_tensor(h) for h in robot.h_list]
         else:
             self.G = np_to_tensor(robot.G)
-            self.h = np_to_tensor(robot.h)
-
-        if self.is_mosaic:
-            self.ratios = robot.mosaic_ratios
-            self.transitions = robot.mosaic_translations
+            self.h = np_to_tensor(robot.h)   
+            
+            if self.is_mosaic:
+                self.mosaic_ratios = robot.mosaic_ratios
+        
         self.max_num = nrmp_max_num
         self.no_obs = False if nrmp_max_num > 0 else True
 
@@ -121,7 +122,7 @@ class NRMP(torch.nn.Module):
         sorted_ids_list = None
 
         if point_list:
-            if self.is_multipolygon or self.is_mosaic:
+            if self.is_multipolygon:
                 # all_points = []
                 # for i in range(self.num_of_polygons):
                 #     polygon_points = point_list[i][0][:, :self.max_num]
@@ -132,7 +133,7 @@ class NRMP(torch.nn.Module):
 
                 sorted_ids_list = []
                 for i in range(self.T + 1):
-                    distance_per_poly_slices = [distance_list[poly_id][i][:min(self.max_num, distance_list[poly_id][i].shape[0] if distance_list[poly_id][i].dim() > 0 else 1)] 
+                    distance_per_poly_slices = [distance_list[poly_id][i][:min(self.max_num, distance_list[poly_id][i].numel())] 
                                                 for poly_id in range(self.num_of_polygons)]
                     all_distances = torch.cat(distance_per_poly_slices, dim=0)
                     
@@ -153,6 +154,7 @@ class NRMP(torch.nn.Module):
                         for poly_id, local_id in sorted_ids:
                             all_points.append(point_list[poly_id][0][:, local_id : local_id+1])
                         self.obstacle_points = torch.cat(all_points, dim=1)
+
             else:
                 self.obstacle_points = point_list[0][
                     :, : self.max_num
@@ -272,35 +274,19 @@ class NRMP(torch.nn.Module):
                                 torch.bmm(lam.T.unsqueeze(1), point.T.unsqueeze(2))
                             ).squeeze(1)
 
-                            fb = temp + mu.T @ self.h_list[poly_id]
-
-                            fa_list[t][i, :] = fa[:, :]
-                            fb_list[t][i, :] = fb[:, :]
-
-                        pn = min(len(sorted_ids_list[t]), self.max_num)
-                        fa_list[t][pn:, :] = fa_list[t][0, :]
-                        fb_list[t][pn:, :] = fb_list[t][0, :]
-
-                    elif self.is_mosaic and (sorted_ids_list is not None):
-                        # print(f"sorted_ids_list length: {len(sorted_ids_list)}, T: {self.T}")
-                        for i, (poly_id, local_id) in enumerate(sorted_ids_list[t]):
-                            mu, lam, point = mu_list[poly_id][t+1][:, local_id:local_id+1], lam_list[poly_id][t+1][:, local_id:local_id+1], point_list[poly_id][t+1][:, local_id:local_id+1]
-                            fa = lam.T
-                            temp = (
-                                torch.bmm(lam.T.unsqueeze(1), point.T.unsqueeze(2))
-                            ).squeeze(1)
-                            if i==0:
-                                fb = temp + mu.T @ self.h
+                            if self.is_mosaic:
+                                ratio = self.mosaic_ratios[poly_id]
+                                fb = temp + mu.T @ self.h * ratio
                             else:
-                                ratio = self.ratios[poly_id-1]
-                                fb = temp + mu.T @ self.h / ratio
+                                fb = temp + mu.T @ self.h_list[poly_id]
+
                             fa_list[t][i, :] = fa[:, :]
                             fb_list[t][i, :] = fb[:, :]
 
                         pn = min(len(sorted_ids_list[t]), self.max_num)
                         fa_list[t][pn:, :] = fa_list[t][0, :]
                         fb_list[t][pn:, :] = fb_list[t][0, :]
-
+                        
                     else:
                         mu, lam, point = mu_list[t + 1], lam_list[t + 1], point_list[t + 1]
                         fa = lam.T
