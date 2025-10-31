@@ -232,8 +232,8 @@ class PAN(torch.nn.Module):
                     if translations.size(0) != P:
                         raise ValueError(f"mosaic_translations first dim {translations.size(0)} != P {P}")
 
-                    obs_points_orig = obs_points.clone()
-                    nom_s_orig = nom_s.clone()
+                    # obs_points_orig = obs_points.clone()
+                    # nom_s_orig = nom_s.clone()
 
                     # translate then scale nom_s per poly
                     nom_s_b = nom_s.unsqueeze(0).expand(P, -1, -1).clone()       # (P,3,T1)
