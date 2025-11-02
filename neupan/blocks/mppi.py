@@ -304,9 +304,9 @@ class MPPIHandler:
             )
 
             B = self.robot_params.num_of_polygons
-            P = self.obs_points.shape[1]
-            all_distances = distance_b.view(M, K, T, B, P)
-            all_distances = all_distances.reshape(M, K, T, B*P)
+            # P = self.obs_points.shape[1]
+            all_distances = distance_b.view(M, K, T, B, -1)
+            all_distances = all_distances.reshape(M, K, T, -1)
 
             if B > 1:
                 topk_distance, _ = torch.topk(
