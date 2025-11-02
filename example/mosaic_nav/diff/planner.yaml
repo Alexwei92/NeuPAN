@@ -5,14 +5,12 @@ ref_speed: 4.0
 device: 'cpu'
 time_print: False
 collision_threshold: 0.1
-log_cost: True
+log_cost: False
 
 robot:
   kinematics: 'diff'
-  shape: 'mosaic'
   max_speed: [8.0, 5.0]
   max_acce: [8.0, 8.0]
-  base_square: [[-1., 1.], [1., 1.], [1., -1.], [-1., -1.]]
   vertices: [
       # scale for testing:
         # [[-3.0, 3.0], [3.0, 3.0], [3.0, -3.0], [-3.0, -3.0]],
@@ -52,6 +50,7 @@ robot:
       [[-0.250, 1.750], [-0.750, 1.750], [-0.750, 1.250], [-0.250, 1.250]],
       [[-0.750, 1.750], [-1.250, 1.750], [-1.250, 1.250], [-0.750, 1.250]]
     ]
+  mosaic_unit_vertices: [[-1., 1.], [1., 1.], [1., -1.], [-1., -1.]]
   wheelbase: 1.6
 
 ipath:

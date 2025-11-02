@@ -2,8 +2,6 @@ from neupan import neupan
 import irsim
 import numpy as np
 import argparse
-import time
-from collections import deque
 
 import warnings
 
@@ -23,16 +21,10 @@ def main(
     point_vel=False,
     max_steps=2000,
     reverse=False,
-    show_time=False,
 ):
     
     env = irsim.make(env_file, save_ani=save_animation, full=full, display=no_display)
     neupan_planner = neupan.init_from_yaml(planner_file)
-    # timing structures for optional console printing
-    if show_time:
-        time_window = 100
-        times = deque(maxlen=time_window)
-        last_print_time = time.time()
     
     # neupan_planner.update_adjust_parameters(q_s=0.5, p_u=1.0, eta=10.0, d_max=1.0, d_min=0.1)
     # neupan_planner.set_reference_speed(5)
@@ -50,38 +42,7 @@ def main(
             points = neupan_planner.scan_to_point(robot_state, lidar_scan)
             point_velocities = None
 
-        if show_time:
-            t0 = time.time()
-            action, info = neupan_planner(robot_state, points, point_velocities, robot_vel)
-            fwd_time = time.time() - t0
-            try:
-                times.append(fwd_time)
-                # print at most once per second
-                if time.time() - last_print_time >= 1.0:
-                    avg = float(np.mean(times)) if len(times) > 0 else float(fwd_time)
-                    var = float(np.var(times)) if len(times) > 0 else 0.0
-                    # try to read PAN.forward last/avg timing from decorator-wrapper
-                    try:
-                        pan_wrapper = neupan_planner.pan.forward.__func__
-                        pan_last = getattr(pan_wrapper, "last_elapsed", None)
-                        pan_total = getattr(pan_wrapper, "total_time", None)
-                        pan_count = getattr(pan_wrapper, "func_count", None)
-                        if pan_last is not None and pan_count:
-                            pan_avg = pan_total / pan_count if pan_total is not None and pan_count else pan_last
-                            pan_msg = f" | PAN forward: {pan_last:.6f} s (avg {pan_avg:.6f} s)"
-                        elif pan_last is not None:
-                            pan_msg = f" | PAN forward: {pan_last:.6f} s"
-                        else:
-                            pan_msg = ""
-                    except Exception:
-                        pan_msg = ""
-
-                    print(f"[NeuPAN] forward time: {fwd_time:.6f} s | avg({len(times)}): {avg:.6f} s | var: {var:.6e} s^2" + pan_msg)
-                    last_print_time = time.time()
-            except Exception:
-                pass
-        else:
-            action, info = neupan_planner(robot_state, points, point_velocities, robot_vel)
+        action, info = neupan_planner(robot_state, points, point_velocities, robot_vel)
 
         if info["stop"]:
             print("NeuPAN stops because of minimum distance")
@@ -128,7 +89,6 @@ if __name__ == "__main__":
     parser.add_argument("-n", "--no_display", action="store_false", help="no display")
     parser.add_argument("-v", "--point_vel", action='store_true', help="point vel")
     parser.add_argument("-m", "--max_steps", type=int, default=1000, help="max steps")
-    parser.add_argument("-st", "--show_time", action="store_true", help="print planner forward running time once per second")
 
     args = parser.parse_args()
 
@@ -139,4 +99,4 @@ if __name__ == "__main__":
 
     reverse = (args.example == "reverse" and args.kinematics == "diff")
 
-    main(env_path_file, planner_path_file, args.save_animation, ani_name, args.full, args.no_display, args.point_vel, args.max_steps, reverse, args.show_time)
+    main(env_path_file, planner_path_file, args.save_animation, ani_name, args.full, args.no_display, args.point_vel, args.max_steps, reverse)

@@ -104,8 +104,8 @@ def main(
     point_velocities = None
 
     pan = neupan_planner.pan
-    print(neupan_planner.robot.G_list)
-    print(neupan_planner.robot.h_list)
+    print(neupan_planner.robot.G)
+    print(neupan_planner.robot.h)
     nom_s = torch.stack([np_to_tensor(robot_state[:3]) for _ in range(pan.T+1)], dim=1)
     obs_points = np_to_tensor(points) if points is not None else None
     print(f"Number of obs points: {obs_points.shape[1]}, type of the obs points: {type(obs_points[:,0])}")
