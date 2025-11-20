@@ -15,9 +15,11 @@ from neupan.blocks import MPPIHandler
 def main(
     env_file,
     planner_file,
+    save_animation=False,
+    ani_name="mppi_animation",
 ):
-    
-    env = irsim.make(env_file, save_ani=False)
+
+    env = irsim.make(env_file, save_ani=save_animation)
     env.step(np.array([0, 0]))
     
     neupan_planner = neupan.init_from_yaml(planner_file)
@@ -55,8 +57,9 @@ def main(
         
         env.step(action)
         env.render()
-        
-    input("Press Enter to close...")
+    
+    env.end(3, ani_name=ani_name)
+    # input("Press Enter to close...")
 
 
 
@@ -67,4 +70,6 @@ if __name__ == "__main__":
     env_path_file = "env.yaml"
     planner_path_file = "planner.yaml"
 
-    main(env_path_file, planner_path_file)
+    parser.add_argument("-a", "--save_animation", action="store_true", help="save animation")
+    args = parser.parse_args()
+    main(env_path_file, planner_path_file, args.save_animation)
