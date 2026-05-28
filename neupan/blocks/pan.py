@@ -84,6 +84,9 @@ class PAN(torch.nn.Module):
         self.is_multipolygon = robot.is_multipolygon
         self.is_mosaic = robot.is_mosaic
         self.num_of_polygons = robot.num_of_polygons
+        self.has_trailer = robot.has_trailer
+        if self.has_trailer:
+            self.num_of_trailer_polygons = robot.num_of_trailer_polygons
 
         if not self.no_obs:
             if self.is_multipolygon and not self.is_mosaic:
@@ -96,7 +99,7 @@ class PAN(torch.nn.Module):
                         robot_h,
                         dune_max_num,
                         train_kwargs,
-                        robot_name=robot.name,
+                        robot_name=robot.name if not self.has_trailer else robot.name + '/tractor',
                         part_name='poly_' + str(i)
                     ))
             else:
@@ -111,6 +114,21 @@ class PAN(torch.nn.Module):
                 )
         else:
             self.dune_layer = None
+            
+        if self.has_trailer:
+            self.dune_layer_trailer_list = []
+            dune_trailer_checkpoint = kwargs.get("dune_trailer_checkpoint", None)
+            for j, (trailer_G, trailer_h) in enumerate(zip(robot.G_trailer_list, robot.h_trailer_list)):
+                self.dune_layer_trailer_list.append(DUNE(
+                    receding,
+                    dune_trailer_checkpoint[j] if dune_trailer_checkpoint is not None else None,
+                    trailer_G,
+                    trailer_h,
+                    dune_max_num,
+                    train_kwargs,
+                    robot_name=robot.name + '/trailer',
+                    part_name='poly_' + str(j)
+                ))
 
         self.current_nom_values = [
             None,

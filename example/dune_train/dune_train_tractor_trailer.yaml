@@ -1,0 +1,32 @@
+robot:
+  kinematics: 'tractor_trailer'
+  # length: 3.35
+  # width: 1.48
+  vertices: [
+    # tractor
+    [[-0.5, 0.74], [2.85, 0.74], [2.85, -0.74], [-0.5, -0.74]],  
+    # trailer
+    # [[-3.0, -1.0], [-1.0, -1.0], [-1.0, 1.0], [-3.0, 1.0]],
+    ]
+  trailer_vertices: [
+    # [[-3.0, -1.0], [-1.0, -1.0], [-1.0, 1.0], [-3.0, 1.0]],
+    # [[-0.5, 0.0], [-1.5, 0.6], [-1.5, -0.6]],
+    # [[-2.5, -1.4], [-1.5, -1.4], [-1.5, 1.4], [-2.5, 1.4]]
+    [[-2.5, -1.8], [-1.5, -1.8], [-1.5, 1.8], [-2.5, 1.8]]
+  ]
+  wheelbase: 1.9
+  trailer_length: 1.5
+  hitch_length: 0.5
+  name: 't_shape_new'
+
+train:
+  direct_train: true
+  data_size: 100000
+  data_range: [-25, -25, 25, 25]
+  batch_size: 256
+  epoch: 5000
+  valid_freq: 250
+  save_freq: 500
+  lr: 5e-5
+  lr_decay: 0.5
+  decay_freq: 1500

@@ -25,6 +25,11 @@ class RobotParams:
     is_mosaic: bool = False
     mosaic_ratios: Optional[torch.Tensor] = None
     mosaic_translations: Optional[torch.Tensor] = None
+    
+    has_trailer: bool = False
+    num_of_trailer_polygons: int = 0
+    trailer_length: float = 1.5
+    hitch_length: float = 0.5
 
 
 def normalize_with_minmax(x):
@@ -91,6 +96,7 @@ class MPPIHandler:
             dtype=self.dtype, device=self.device
         )
 
+        # Mosaic parameters
         if robot.is_mosaic:
             self.robot_params.mosaic_ratios = robot.mosaic_ratios.to(
                 dtype=self.dtype, device=self.device
@@ -98,6 +104,14 @@ class MPPIHandler:
             self.robot_params.mosaic_translations = robot.mosaic_translations.to(
                 dtype=self.dtype, device=self.device
             )
+            
+        # Trailer parameters
+        if robot.has_trailer:
+            self.robot_params.has_trailer = True
+            self.robot_params.nx = 6
+            self.robot_params.num_of_trailer_polygons = robot.num_of_trailer_polygons
+            self.robot_params.trailer_length = robot.trailer_length
+            self.robot_params.hitch_length = robot.hitch_length
 
         # PAN
         self.pan = None
@@ -137,8 +151,10 @@ class MPPIHandler:
     def dynamics(self, state: torch.Tensor, action: torch.Tensor, t: int = None):
         if self.robot_params.kinematics == "acker":
             return self.ackermann_model(state, action, self.robot_params)
-        elif self.params.kinematics == "diff":
+        elif self.robot_params.kinematics == "diff":
             return self.diff_model(state, action, self.robot_params)
+        elif self.robot_params.kinematics == "tractor_trailer":
+            return self.tractor_trailer_model(state, action, self.robot_params)
         else:
             raise ValueError(f"Kinematics {self.robot_params.kinematics} not supported")
 
@@ -218,6 +234,219 @@ class MPPIHandler:
 
         return new_state
 
+    def tractor_trailer_model(
+        self, state: torch.Tensor, action: torch.Tensor, params: RobotParams
+    ):
+        if state.ndim == 1:
+            state = state.unsqueeze(0)
+
+        if action.ndim == 1:
+            action = action.unsqueeze(0)
+
+        dt = params.dt
+        x, y, yaw, phi, v, delta = state.unbind(-1)
+
+        action_feas_min = torch.maximum(
+            -params.max_du * torch.ones_like(action),
+            (-params.max_u - state[:, 4:6]) / dt,
+        )
+        action_feas_max = torch.minimum(
+            params.max_du * torch.ones_like(action), (params.max_u - state[:, 4:6]) / dt
+        )
+        action_feas = torch.clamp(action, action_feas_min, action_feas_max)
+
+        a, d_delta = action_feas.unbind(-1)
+        v_next = v + a * dt
+        delta_next = delta + d_delta * dt
+
+        new_state = torch.stack(
+            [
+                x + v_next * torch.cos(yaw) * dt,
+                y + v_next * torch.sin(yaw) * dt,
+                yaw + v_next * torch.tan(delta_next) / params.L * dt,
+                phi + (-torch.sin(phi) / params.trailer_length - torch.tan(delta_next) / params.L - params.hitch_length * torch.cos(phi) * torch.tan(delta_next) / (params.L * params.trailer_length)) * dt,
+                v_next,
+                delta_next,
+            ],
+            dim=-1,
+        )
+
+        return new_state
+    
+    # def running_cost(
+    #     self,
+    #     state: torch.Tensor,
+    #     action: torch.Tensor,
+    #     t: Optional[torch.Tensor] = None,
+    # ):
+    #     """
+    #     state: (M, K, T, nx)
+    #     action: (M, K, T, 2)
+    #     t: (T,)
+    #     """
+
+    #     M, K, T, nx = state.shape
+    #     eps = 1e-8
+
+    #     # Hyperparameters
+    #     gamma = self.hyperparameters.get("gamma", 0.98)  # time discount factor
+    #     map_scale = self.hyperparameters.get("map_scale", 30.0)  # map scale [m]
+    #     r_gate = self.hyperparameters.get("r_gate", 10.0)  # goal gate radius [m]
+    #     d_safe = self.hyperparameters.get("d_safe", 2.0)  # safety distance [m]
+    #     pos_tol = self.hyperparameters.get(
+    #         "pos_tol", 0.2
+    #     )  # position tolerance to goal [m]
+    #     yaw_tol = self.hyperparameters.get(
+    #         "yaw_tol", 0.1
+    #     )  # yaw tolerance to goal [rad]
+    #     early_R = self.hyperparameters.get("early_R", 500.0)  # early arrival reward
+
+    #     # Normalization
+    #     inv_U2 = 1.0 / (self.robot_params.max_du**2)
+    #     inv_scale2 = 1.0 / (map_scale**2)
+    #     inv_pi2 = 1.0 / (torch.pi**2)
+    #     inv_v = 1.0 / self.ref_speed
+    #     inv_v2 = inv_v**2
+
+    #     # Time discount
+    #     td = (gamma ** torch.arange(T, device=self.device)).view(
+    #         1, 1, T
+    #     )  # (1, 1, T) # TODO: can be cached
+
+    #     # --------- control cost ---------
+    #     # control_cost = (action**2).sum(dim=-1)  # (M, K, T)
+    #     control_cost = (action**2 * inv_U2).sum(dim=-1)  # (M, K, T)
+
+    #     # --------- progress cost ---------
+    #     goal_vec = self.goal[0:2, 0].view(1, 1, 1, 2) - state[..., 0:2]  # (M, K, T, 2)
+    #     r2 = (goal_vec**2).sum(dim=-1)  # (M, K, T)
+    #     dr2 = r2.diff(dim=-1, prepend=r2[..., :1])  # (M, K, T)
+    #     progress_cost = torch.nn.functional.relu(dr2)  # (M, K, T)
+    #     progress_cost *= inv_scale2  # normalization
+
+    #     # --------- yaw cost (gated) ---------
+    #     gate = torch.exp(-r2 / (2 * (r_gate**2)))  # (M, K, T)
+    #     yaw_err = (state[..., 2] - self.goal[2, 0] + torch.pi) % (
+    #         2 * torch.pi
+    #     ) - torch.pi  # (M, K, T)
+    #     goal_yaw_cost = gate * (yaw_err**2) * inv_pi2  # (M, K, T)
+    #     goal_yaw_cost *= inv_pi2  # normalization
+
+    #     # --------- speed toward goal cost ---------
+    #     inv_r = torch.rsqrt(r2 + eps)  # (M, K, T)
+    #     unit_dir = goal_vec * inv_r.unsqueeze(-1)  # (M, K, T, 2)
+    #     fwd = torch.stack(
+    #         [torch.cos(state[..., 2]), torch.sin(state[..., 2])], dim=-1
+    #     )  # (M, K, T, 2)
+    #     v_toward = state[..., -2] * (fwd * unit_dir).sum(dim=-1)  # (M, K, T)
+    #     speed_toward_goal_cost = -v_toward  # (M, K, T)
+    #     speed_toward_goal_cost *= inv_v  # normalization
+
+    #     # --------- reference speed cost (gated) ---------
+    #     ref_speed_cost = (1.0 - gate) * (
+    #         state[..., -2] - self.ref_speed
+    #     ) ** 2  # (M, K, T)
+    #     ref_speed_cost *= inv_v2  # normalization
+
+    #     # --------- collision cost ---------
+    #     collision_cost = torch.zeros_like(control_cost)
+    #     if self.obs_points is not None:
+    #         distance_b = self.pan_forward(
+    #             state.view(M * K * T, nx).T, self.obs_points
+    #         )
+
+    #         B = self.robot_params.num_of_polygons
+    #         if self.robot_params.has_trailer:
+    #             B += self.robot_params.num_of_trailer_polygons
+
+    #         all_distances = distance_b.view(M, K, T, B, -1)
+    #         all_distances = all_distances.reshape(M, K, T, -1)
+
+    #         if B > 1:
+    #             topk_distance, _ = torch.topk(
+    #                 all_distances,
+    #                 min(self.max_obs_num, all_distances.shape[-1]),
+    #                 dim=-1,
+    #                 largest=False,
+    #             )  # (M, K, T, topk)
+    #         else:
+    #             topk_distance = all_distances[
+    #                 ..., : min(self.max_obs_num, all_distances.shape[-1])
+    #             ]  # (M, K, T, topk)
+
+    #         collision_penalty = torch.nn.functional.softplus(
+    #             d_safe - topk_distance
+    #         )  # (M, K, T, topk)
+    #         collision_cost = collision_penalty.mean(dim=-1)  # (M, K, T)
+
+    #     # --------- near goal helper cost ---------
+    #     # near = (torch.sqrt(r2 + eps) < r_gate).float()
+
+    #     # v_min_near = 0.07 * self.ref_speed
+    #     # keep_move_cost = near * torch.nn.functional.relu(
+    #     #     v_min_near - state[..., -2]
+    #     # )  # (M, K, T)
+    #     # yaw_rate = state[..., -2] * torch.tan(state[..., -1]) / self.robot_params.L
+    #     # align_turn_cost = -(yaw_rate**2) * (1.0 + 4.0 * near)
+
+    #     # --------- early termination reward & cost ---------
+    #     at_goal = (r2 < (pos_tol**2)) & (yaw_err.abs() < yaw_tol)  # (M, K, T)
+    #     reached_cumsum = at_goal.cumsum(dim=-1).clamp_max_(1)  # (M, K)
+    #     first_mask = at_goal & (reached_cumsum == 1)  # (M, K, T)
+    #     term_bonus = -early_R * first_mask.float()
+    #     is_last = torch.zeros_like(r2)
+    #     is_last[..., -1] = 1.0
+    #     term_pose_cost = is_last * (3.0 * r2 * inv_scale2 + 5.0 * yaw_err**2 * inv_pi2)
+
+    #     # w_control = 0.1
+    #     # w_goal_abs = 2.0
+    #     # w_progress = 1.0
+    #     # w_heading = 5.0
+    #     # w_speed_toward = 2.0
+    #     # w_ref_speed = 1.0
+    #     # w_collision = 5.0
+
+    #     w_control = 0.01
+    #     w_goal_abs = 0.25
+    #     w_progress = 1.0
+    #     w_yaw = 1.0
+    #     w_speed_toward = 0.35
+    #     w_ref_speed = 0.1
+    #     w_collision = 1.0 * 0.5
+    #     w_term_funnel = 1.0
+    #     # w_move_near = 0.3
+    #     # w_align_turn = 0.3 
+
+    #     # w_yaw = w_yaw * (1.0 + 4.0 * near)
+    #     # w_control = w_control * (1.0 - 0.5 * near)
+    #     # w_progress = w_progress * (
+    #     #     1.0
+    #     #     + 2.0
+    #     #     * ((r2[..., 0] - r2[..., -1] < 0.05 * (map_scale**2)).float().unsqueeze(-1))
+    #     # )  # anti-stuck
+
+    #     per_step = (
+    #         w_control * control_cost
+    #         + w_goal_abs * r2 / (map_scale**2)
+    #         + w_progress * progress_cost
+    #         + w_yaw * goal_yaw_cost
+    #         + w_speed_toward * speed_toward_goal_cost
+    #         + w_ref_speed * ref_speed_cost
+    #         + w_collision * collision_cost
+    #         + w_term_funnel * term_pose_cost
+    #         # + w_move_near * keep_move_cost
+    #         # + w_align_turn * align_turn_cost
+    #     )  # (M, K, T)
+        
+    #     if self.robot_params.has_trailer:
+    #         # --------- trailer angle cost ---------
+    #         trailer_angle_cost = (state[..., 3]) ** 2 * inv_pi2 # (M, K, T)
+    #         per_step += 10.0 * trailer_angle_cost
+
+    #     cost = (per_step + term_bonus) * td  # (M, K, T)
+
+    #     return cost
+    
     def running_cost(
         self,
         state: torch.Tensor,
@@ -225,166 +454,193 @@ class MPPIHandler:
         t: Optional[torch.Tensor] = None,
     ):
         """
-        state: (M, K, T, nx)
-        action: (M, K, T, 2)
+        state: (M, K, T, nx)  -> [x, y, theta, phi, v, psi]
+        action: (M, K, T, 2)  -> [a, zeta]
         t: (T,)
         """
 
-        # x, y, yaw, v, delta = state.unbind(-1)
-        # a_cmd, d_delta_cmd = action.unbind(-1)
-
         M, K, T, nx = state.shape
+        device = state.device
         eps = 1e-8
 
+        # ------------------------------------------------------------------
         # Hyperparameters
-        gamma = self.hyperparameters.get("gamma", 0.98)  # time discount factor
-        map_scale = self.hyperparameters.get("map_scale", 30.0)  # map scale [m]
-        r_gate = self.hyperparameters.get("r_gate", 10.0)  # goal gate radius [m]
-        d_safe = self.hyperparameters.get("d_safe", 2.0)  # safety distance [m]
-        pos_tol = self.hyperparameters.get(
-            "pos_tol", 0.2
-        )  # position tolerance to goal [m]
-        yaw_tol = self.hyperparameters.get(
-            "yaw_tol", 0.1
-        )  # yaw tolerance to goal [rad]
-        early_R = self.hyperparameters.get("early_R", 500.0)  # early arrival reward
+        # ------------------------------------------------------------------
+        gamma = self.hyperparameters.get("gamma", 1.0)  # time discount factor
 
-        # Normalization
-        inv_U2 = 1.0 / (self.robot_params.max_du**2)
-        inv_scale2 = 1.0 / (map_scale**2)
+        # Goal tracking weights (W_g)
+        w_goal_pos = self.hyperparameters.get("w_goal_pos", 1.0)     # x,y
+        w_goal_yaw = self.hyperparameters.get("w_goal_yaw", 0.5)     # theta
+        w_goal_v   = self.hyperparameters.get("w_goal_v", 0.0)       # v
+        w_goal_psi = self.hyperparameters.get("w_goal_psi", 0.0)     # steering angle
+
+        # Control magnitude weights (W_u)
+        w_u_a    = self.hyperparameters.get("w_u_a", 0.1)   # accel
+        w_u_zeta = self.hyperparameters.get("w_u_zeta", 0.1)  # steering rate
+
+        # Smoothness weights (W_{Δu})
+        w_du_a    = self.hyperparameters.get("w_du_a", 0.1)
+        w_du_zeta = self.hyperparameters.get("w_du_zeta", 0.1)
+
+        # Articulation cost weight
+        w_phi = self.hyperparameters.get("w_phi", 1.0)
+
+        # Obstacle barrier weights
+        w_obs  = self.hyperparameters.get("w_obs", 20.0)    # near-obstacle barrier
+        w_coll = self.hyperparameters.get("w_coll", 500.0)  # penetration penalty
+
+        # Terminal cost weights (W_T)
+        w_T_pos = self.hyperparameters.get("w_T_pos", 5.0) * 10
+        w_T_yaw = self.hyperparameters.get("w_T_yaw", 2.0) * 10 * 1
+        w_T_v   = self.hyperparameters.get("w_T_v", 0.0)
+        w_T_psi = self.hyperparameters.get("w_T_psi", 0.0)
+        w_T_phi = self.hyperparameters.get("w_T_phi", 2.0) * 10 * 1
+
+        # Normalizations
         inv_pi2 = 1.0 / (torch.pi**2)
-        inv_v = 1.0 / self.ref_speed
-        inv_v2 = inv_v**2
 
         # Time discount
-        td = (gamma ** torch.arange(T, device=self.device)).view(
-            1, 1, T
-        )  # (1, 1, T) # TODO: can be cached
+        td = (gamma ** torch.arange(T, device=device)).view(1, 1, T)  # (1,1,T)
 
-        # --------- control cost ---------
-        # control_cost = (action**2).sum(dim=-1)  # (M, K, T)
-        control_cost = (action**2 * inv_U2).sum(dim=-1)  # (M, K, T)
+        # ------------------------------------------------------------------
+        # Goal tracking cost: c_goal(s_tau)
+        #    (s - s_goal)^T W_g (s - s_goal)
+        # ------------------------------------------------------------------
+        # Assume self.goal: (nx, 1)
+        goal = self.goal[:, 0]  # (nx,)
 
-        # --------- progress cost ---------
-        goal_vec = self.goal[0:2, 0].view(1, 1, 1, 2) - state[..., 0:2]  # (M, K, T, 2)
-        r2 = (goal_vec**2).sum(dim=-1)  # (M, K, T)
-        dr2 = r2.diff(dim=-1, prepend=r2[..., :1])  # (M, K, T)
-        progress_cost = torch.nn.functional.relu(dr2)  # (M, K, T)
-        progress_cost *= inv_scale2  # normalization
+        # Position error
+        pos_err = state[..., 0:2] - goal[0:2].view(1, 1, 1, 2)  # (M,K,T,2)
+        pos_err_sq = (pos_err**2).sum(dim=-1)  # (M,K,T)
+        pos_err_sq = pos_err_sq * (1/5.0)**2
 
-        # --------- yaw cost (gated) ---------
-        gate = torch.exp(-r2 / (2 * (r_gate**2)))  # (M, K, T)
-        yaw_err = (state[..., 2] - self.goal[2, 0] + torch.pi) % (
-            2 * torch.pi
-        ) - torch.pi  # (M, K, T)
-        goal_yaw_cost = gate * (yaw_err**2) * inv_pi2  # (M, K, T)
-        goal_yaw_cost *= inv_pi2  # normalization
+        # Heading error wrapped to [-pi, pi]
+        yaw_err = (state[..., 2] - goal[2] + torch.pi) % (2 * torch.pi) - torch.pi
+        yaw_err_sq = yaw_err**2 * inv_pi2  # normalize angle
 
-        # --------- speed toward goal cost ---------
-        inv_r = torch.rsqrt(r2 + eps)  # (M, K, T)
-        unit_dir = goal_vec * inv_r.unsqueeze(-1)  # (M, K, T, 2)
-        fwd = torch.stack(
-            [torch.cos(state[..., 2]), torch.sin(state[..., 2])], dim=-1
-        )  # (M, K, T, 2)
-        v_toward = state[..., 3] * (fwd * unit_dir).sum(dim=-1)  # (M, K, T)
-        speed_toward_goal_cost = -v_toward  # (M, K, T)
-        speed_toward_goal_cost *= inv_v  # normalization
+        # # Optional velocity / steering angle tracking (if goal has those components)
+        # v_err = state[..., 4] - goal[4] if nx > 4 else torch.zeros_like(pos_err_sq)
+        # v_err_sq = v_err**2
 
-        # --------- reference speed cost (gated) ---------
-        ref_speed_cost = (1.0 - gate) * (
-            state[..., 3] - self.ref_speed
-        ) ** 2  # (M, K, T)
-        ref_speed_cost *= inv_v2  # normalization
+        # psi_err = state[..., 5] - goal[5] if nx > 5 else torch.zeros_like(pos_err_sq)
+        # psi_err_sq = psi_err**2 * inv_pi2
 
-        # --------- collision cost ---------
-        collision_cost = torch.zeros_like(control_cost)
+        c_goal = (
+            w_goal_pos * pos_err_sq
+            + w_goal_yaw * yaw_err_sq
+            # + w_goal_v * v_err_sq
+            # + w_goal_psi * psi_err_sq
+        )  # (M,K,T)
+
+        # ------------------------------------------------------------------
+        # Control cost: c_control(u_tau) = u^T W_u u
+        # ------------------------------------------------------------------
+        a    = action[..., 0]  # (M,K,T)
+        zeta = action[..., 1]  # (M,K,T)
+
+        c_control = w_u_a * a**2 + w_u_zeta * zeta**2  # (M,K,T)
+
+        # ------------------------------------------------------------------
+        # Smoothness cost: c_smooth(u_tau, u_{tau-1})
+        # ------------------------------------------------------------------
+        du = action.diff(dim=2, prepend=action[..., :1, :])  # (M,K,T,2)
+        da    = du[..., 0]
+        dzeta = du[..., 1]
+
+        c_smooth = w_du_a * da**2 + w_du_zeta * dzeta**2  # (M,K,T)
+
+        # ------------------------------------------------------------------
+        # Articulation cost: c_articulation(s_tau) = w_phi * phi^2
+        # ------------------------------------------------------------------
+        if self.robot_params.has_trailer:
+            phi = state[..., 3]  # articulation angle
+            c_articulation = w_phi * (phi**2) * inv_pi2  # normalize angle a bit
+        else:
+            c_articulation = torch.zeros_like(c_goal)
+
+        # ------------------------------------------------------------------
+        # Obstacle cost: barrier-style potential using signed distance
+        #
+        # c_obstacle =
+        #   w_obs / (d + eps),       if d > 0 (outside, closer => higher cost)
+        #   w_coll * |d|,            if d <= 0 (penetration, linear)
+        # ------------------------------------------------------------------
+        c_obstacle = torch.zeros_like(c_goal)
+
         if self.obs_points is not None:
+            # distance_b: (B * num_points, M*K*T) or similar -> we know you reshape later
             distance_b = self.pan_forward(
-                state.view(M * K * T, nx)[:, :3].T, self.obs_points
+                state.view(M * K * T, nx).T, self.obs_points
             )
 
             B = self.robot_params.num_of_polygons
-            # P = self.obs_points.shape[1]
+            if self.robot_params.has_trailer:
+                B += self.robot_params.num_of_trailer_polygons
+
+            # all_distances: (M,K,T,total_points_over_all_polygons)
             all_distances = distance_b.view(M, K, T, B, -1)
             all_distances = all_distances.reshape(M, K, T, -1)
 
-            if B > 1:
-                topk_distance, _ = torch.topk(
-                    all_distances,
-                    min(self.max_obs_num, all_distances.shape[-1]),
-                    dim=-1,
-                    largest=False,
-                )  # (M, K, T, topk)
-            else:
-                topk_distance = all_distances[
-                    ..., : min(self.max_obs_num, all_distances.shape[-1])
-                ]  # (M, K, T, topk)
+            # Minimum signed distance over all body polygons and points
+            d_min, _ = all_distances.min(dim=-1)  # (M,K,T)
 
-            collision_penalty = torch.nn.functional.softplus(
-                d_safe - topk_distance
-            )  # (M, K, T, topk)
-            collision_cost = collision_penalty.mean(dim=-1)  # (M, K, T)
+            positive = d_min > 0
+            # d > 0: reciprocal barrier; d <= 0: linear in penetration depth
+            c_obstacle = torch.where(
+                positive,
+                w_obs / (d_min + eps),
+                w_coll * torch.abs(d_min),
+            )  # (M,K,T)
 
-        # --------- near goal helper cost ---------
-        # near = (torch.sqrt(r2 + eps) < r_gate).float()
+        # ------------------------------------------------------------------
+        # Terminal cost: c_terminal(s_{t+N})
+        #   same structure as goal cost but with W_T
+        # ------------------------------------------------------------------
+        is_last = torch.zeros_like(c_goal)
+        is_last[..., -1] = 1.0  # mask only last step
 
-        # v_min_near = 0.07 * self.ref_speed
-        # keep_move_cost = near * torch.nn.functional.relu(
-        #     v_min_near - state[..., 3]
-        # )  # (M, K, T)
-        # yaw_rate = state[..., 3] * torch.tan(state[..., 4]) / self.robot_params.L
-        # align_turn_cost = -(yaw_rate**2) * (1.0 + 4.0 * near)
+        final_pos_err_sq = pos_err_sq[..., -1]        # (M,K)
+        final_yaw_err_sq = yaw_err_sq[..., -1]        # (M,K)
+        # final_v_err_sq   = v_err_sq[..., -1]          # (M,K)
+        # final_psi_err_sq = psi_err_sq[..., -1]        # (M,K)
 
-        # --------- early termination reward & cost ---------
-        at_goal = (r2 < (pos_tol**2)) & (yaw_err.abs() < yaw_tol)  # (M, K, T)
-        reached_cumsum = at_goal.cumsum(dim=-1).clamp_max_(1)  # (M, K)
-        first_mask = at_goal & (reached_cumsum == 1)  # (M, K, T)
-        term_bonus = -early_R * first_mask.float()
-        is_last = torch.zeros_like(r2)
-        is_last[..., -1] = 1.0
-        term_pose_cost = is_last * (3.0 * r2 * inv_scale2 + 2.0 * yaw_err**2 * inv_pi2)
+        # c_terminal_scalar = (
+        #     w_T_pos * final_pos_err_sq
+        #     + w_T_yaw * final_yaw_err_sq
+        #     # + w_T_v * final_v_err_sq
+        #     # + w_T_psi * final_psi_err_sq
+        #     + w_T_phi * phi[..., -1]**2
+        # )  # (M,K)
+        
+        pos_err_threshold = 20.0  # meters
+        terminal_active_mask = (torch.sqrt(pos_err_sq[..., 0]) < pos_err_threshold).float()  # (M,K)
 
-        # w_control = 0.1
-        # w_goal_abs = 2.0
-        # w_progress = 1.0
-        # w_heading = 5.0
-        # w_speed_toward = 2.0
-        # w_ref_speed = 1.0
-        # w_collision = 5.0
+        c_terminal_scalar = (
+            w_T_pos * final_pos_err_sq
+            + w_T_yaw * final_yaw_err_sq
+            # + w_T_v * final_v_err_sq
+            # + w_T_psi * final_psi_err_sq
+            + w_T_phi * (phi[..., -1] ** 2) * inv_pi2
+        ) # (M,K)
 
-        w_control = 0.01
-        w_goal_abs = 0.25
-        w_progress = 1.0
-        w_yaw = 1.0
-        w_speed_toward = 0.35
-        w_ref_speed = 0.1
-        w_collision = 1.0
-        w_term_funnel = 1.0
-        w_move_near = 0.3
-        w_align_turn = 0.3
+        c_terminal = is_last * c_terminal_scalar.unsqueeze(-1)  # (M,K,T)
 
-        # w_yaw = w_yaw * (1.0 + 4.0 * near)
-        # w_control = w_control * (1.0 - 0.5 * near)
-        # w_progress = w_progress * (
-        #     1.0
-        #     + 2.0
-        #     * ((r2[..., 0] - r2[..., -1] < 0.05 * (map_scale**2)).float().unsqueeze(-1))
-        # )  # anti-stuck
-
+        # ------------------------------------------------------------------
+        # Total running cost:
+        #   C = c_goal + c_control + c_smooth + c_articulation + c_obstacle + c_terminal
+        # ------------------------------------------------------------------
         per_step = (
-            w_control * control_cost
-            + w_goal_abs * r2 / (map_scale**2)
-            + w_progress * progress_cost
-            + w_yaw * goal_yaw_cost
-            + w_speed_toward * speed_toward_goal_cost
-            + w_ref_speed * ref_speed_cost
-            + w_collision * collision_cost
-            + w_term_funnel * term_pose_cost
-            # + w_move_near * keep_move_cost
-            # + w_align_turn * align_turn_cost
-        )  # (M, K, T)
+            c_goal
+            + c_control
+            + c_smooth
+            + c_articulation
+            + c_obstacle
+            + c_terminal
+        )  # (M,K,T)
 
-        cost = (per_step + term_bonus) * td  # (M, K, T)
+        # Time-discounted running costs
+        cost = per_step * td  # (M,K,T)
+        # cost = per_step
 
         return cost
 
@@ -409,7 +665,7 @@ class MPPIHandler:
     ):
         """
         Args:
-            nom_s: tensor of shape (3, N)
+            nom_s: tensor of shape (nx, N)
             obs_points: tensor of shape (2, P) or None
 
         Returns:
@@ -427,12 +683,12 @@ class MPPIHandler:
     ):
         """
         Args:
-            nom_s: tensor of shape (3, N)
+            nom_s: tensor of shape (nx, N)
             obs_points: tensor of shape (2, P)
 
         Returns:
-            distance_b: tensor of shape (N, B, P)
-            (B - number of polygons)
+            distance_b: tensor of shape (N, B + B_t, P)
+            (B - number of polygons, B_t - number of trailer polygons)
         """
         if obs_points is None:
             return None
@@ -463,12 +719,31 @@ class MPPIHandler:
             else:
                 distance_b = distance_b.unsqueeze(1) # (N, 1, P)
 
+        if self.robot_params.has_trailer:
+            trailer_yaw = nom_s[4, :] + nom_s[2, :]
+            trailer_x = nom_s[0, :] - self.robot_params.hitch_length * torch.cos(trailer_yaw) - self.robot_params.trailer_length * torch.cos(trailer_yaw)
+            trailer_y = nom_s[1, :] - self.robot_params.hitch_length * torch.sin(trailer_yaw) - self.robot_params.trailer_length * torch.sin(trailer_yaw)
+            trailer_nom_s = torch.stack([trailer_x, trailer_y, trailer_yaw], dim=0)
+            point_flow_trailer_b, R_trailer_b, obs_points_trailer_b = self.generate_point_flow(
+                trailer_nom_s, obs_points
+            )
+            
+            distance_trailer_b_list = []
+            for i, dune_layer in enumerate(self.pan.dune_layer_trailer_list):
+                distance_trailer_b_i = dune_layer.batch_forward_fast(
+                    point_flow_trailer_b, R_trailer_b, obs_points_trailer_b
+                ) # (N, P)
+                distance_trailer_b_list.append(distance_trailer_b_i)
+            distance_trailer_b = torch.stack(distance_trailer_b_list, dim=1) # (N, B_t, P)
+
+            distance_b = torch.cat([distance_b, distance_trailer_b], dim=1) # (N, B + B_t, P)
+
         return distance_b
 
     def generate_point_flow(self, nom_s: torch.Tensor, obs_points: torch.Tensor):
         """
         Args:
-            nom_s: (3, N)
+            nom_s: (nx, N)
             obs_points: (2, P)
 
         Returns:
@@ -493,7 +768,7 @@ class MPPIHandler:
     def batch_state_transform(self, states: torch.Tensor, obs_points: torch.Tensor):
         """
         Args:
-            states: (3, N)
+            states: (nx, N)
             obs_points: (2, P)
 
         Returns:
@@ -659,7 +934,7 @@ class MPPIHandler:
         with torch.no_grad():
             action = self.controller.command(state)
             next_state = self.dynamics(state.T, action)
-            u_0 = next_state[0, 3:5].detach().cpu().numpy()  # v, delta (or w)
+            u_0 = next_state[0, -2:].detach().cpu().numpy()  # v, delta (or w)
             return u_0
 
     def get_action_sequence(self):
@@ -676,7 +951,7 @@ class MPPIHandler:
         for i in range(action_sequence.shape[0]):
             next_state = self.dynamics(state, action_sequence[i])
             state = next_state
-            trajectory.append(state[:, :3])
+            trajectory.append(state[:, 0:3])
 
         trajectory = torch.cat(trajectory, dim=0).detach().cpu().numpy()  # (T, 3)
         return trajectory

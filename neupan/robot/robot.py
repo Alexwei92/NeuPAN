@@ -41,7 +41,10 @@ class robot:
         wheelbase: Optional[float] = None,
         length: Optional[float] = None,
         width: Optional[float] = None,
-        mosaic_unit_vertices: Optional[Union[list[list[float]], np.ndarray]] = None, 
+        mosaic_unit_vertices: Optional[Union[list[list[float]], np.ndarray]] = None,
+        trailer_vertices: Optional[Union[np.ndarray, list[list[list[float]]]]] = None,
+        trailer_length: float = 0,
+        hitch_length: float = 0,
         **kwargs,
     ):
         
@@ -51,13 +54,21 @@ class robot:
         self.shape = None
         self.is_mosaic = False
         self.is_multipolygon = is_vertices_multipolygon(vertices)
+        self.num_of_polygons = 0
+        
+        self.has_trailer = False
+        self.num_of_trailer_polygons = 0
+        self.trailer_length = 0
+        self.hitch_length = 0
+        
+        self.wheelbase = 0 if wheelbase is None else wheelbase
         
         if not self.is_multipolygon:
             self.num_of_polygons = 1
             self.vertices = self.cal_vertices(vertices, length, width, wheelbase)
             self.G, self.h = gen_inequal_from_vertex(self.vertices)
         else:
-            self.vertices_list = self.cal_vertices_from_multipolygon(vertices, wheelbase)
+            self.vertices_list = self.cal_vertices_from_multipolygon(vertices)
             self.num_of_polygons = len(self.vertices_list)
                        
             if mosaic_unit_vertices is not None:
@@ -80,14 +91,29 @@ class robot:
                 self.shape = "mosaic"
                 self.is_mosaic = TRUE
             else:
-                self.vertices_list = self.cal_vertices_from_multipolygon(vertices, wheelbase)
+                self.vertices_list = self.cal_vertices_from_multipolygon(vertices)
                 self.num_of_polygons = len(vertices)
-                self.G_list = []
+                self.G_list = [] 
                 self.h_list = []
                 for vertices in self.vertices_list:
                     G, h = gen_inequal_from_vertex(vertices)
                     self.G_list.append(G)
                     self.h_list.append(h)
+
+        if trailer_vertices is not None:
+            self.has_trailer = True
+            self.trailer_length = trailer_length
+            self.hitch_length = hitch_length
+            # TODO: add mosaic support for trailer
+            
+            self.trailer_vertices_list = self.cal_vertices_from_multipolygon(trailer_vertices, offset=[hitch_length + trailer_length, 0])
+            self.num_of_trailer_polygons = len(self.trailer_vertices_list)
+            self.G_trailer_list = []
+            self.h_trailer_list = []
+            for vertices in self.trailer_vertices_list:
+                G, h = gen_inequal_from_vertex(vertices)  # in trailer local coordinate system
+                self.G_trailer_list.append(G)
+                self.h_trailer_list.append(h)
 
         self.T = receding
         self.dt = step_time
@@ -97,7 +123,7 @@ class robot:
         self.max_speed = np.c_[max_speed] if isinstance(max_speed, list) else max_speed
         self.max_acce = np.c_[max_acce] if isinstance(max_acce, list) else max_acce
 
-        if kinematics == 'acker':
+        if kinematics == 'acker' or kinematics == 'tractor_trailer':
             if self.max_speed[1] >= 1.57:
                 print(f"Warning: max steering angle of acker robot is {self.max_speed[1]} rad, which is larger than 1.57 rad, so it is limited to 1.57 rad")
                 self.max_speed[1] = 1.57
@@ -105,8 +131,8 @@ class robot:
         self.speed_bound = self.max_speed
         self.acce_bound = self.max_acce * self.dt
 
-        robot_name = kwargs.get("name", 'default') 
-        self.name = self.kinematics + "_robot" + '_' + str(robot_name) 
+        name = kwargs.get("name", 'default') 
+        self.name = self.kinematics + "_robot" + '_' + str(name) 
 
 
     def define_variable(self, no_obs: bool = False, indep_dis: cp.Variable = None):
@@ -390,23 +416,23 @@ class robot:
             vertices_np = self.cal_vertices_from_length_width(length, width, wheelbase)
             self.length = length
             self.width = width
-            self.wheelbase = wheelbase
 
         assert vertices_np.shape[1] >= 3, "vertices must be a numpy array of shape (2, N), N >= 3"
 
         return vertices_np
     
-    def cal_vertices_from_multipolygon(self, vertices_list = None, wheelbase=None):
+    def cal_vertices_from_multipolygon(self, vertices_list = None, offset = None):
         self.shape = "multipolygon"
         if vertices_list is not None:
             vertices_np_list = []
             for vertices in vertices_list:
                 vertices_np = np.array(vertices).T
                 assert vertices_np.shape[1] >= 3, "vertices must be a numpy array of shape (2, N), N >= 3"
+                
+                if offset is not None:
+                    vertices_np += np.array(offset).reshape(2, 1)
 
                 vertices_np_list.append(vertices_np)
-                
-        self.wheelbase = wheelbase
            
         return vertices_np_list
 
